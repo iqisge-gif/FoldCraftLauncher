@@ -10,12 +10,15 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.bumptech.glide.Glide;
+import com.mio.data.FavoriteManager;
+import com.mio.data.favorite.DownloadFavoriteEntity;
+import com.mio.util.AndroidUtilKt;
 import com.tungsten.fcl.R;
 import com.tungsten.fcl.setting.Profile;
 import com.tungsten.fcl.setting.Profiles;
 import com.tungsten.fcl.ui.UIManager;
 import com.tungsten.fcl.ui.download.DownloadUI;
-import com.mio.util.AndroidUtilKt;
+import com.tungsten.fcl.ui.download.favorite.FavoriteActionsKt;
 import com.tungsten.fcl.util.ModTranslations;
 import com.tungsten.fclcore.download.LibraryAnalyzer;
 import com.tungsten.fclcore.mod.LocalModFile;
@@ -46,14 +49,12 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
 
     private final RemoteModRepository repository;
     private final ModTranslations translations;
     private final RemoteMod addon;
-    private final Profile.ProfileVersion version;
     private final RemoteModVersionPage.DownloadCallback callback;
     private final DownloadPage page;
 
@@ -69,6 +70,7 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
     private FCLTextView description;
     private FCLTextView mcmod;
     private FCLImageButton website;
+    private FCLImageButton favorite;
     private FCLProgressBar screenshotLoading;
     private FCLImageView screenshotRetry;
     private FCLTextView screenshotNoResult;
@@ -77,14 +79,19 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
 
     private String recommendedVersion;
 
-    public RemoteModInfoPage(Context context, int id, int resId, DownloadPage page, RemoteMod addon, Profile.ProfileVersion version, @Nullable RemoteModVersionPage.DownloadCallback callback) {
-        super(context, id, resId);
+    /**
+     * 原始版本数据（未按游戏版本分类），目录/版本切换后重算推荐版本用
+     */
+    private List<RemoteMod.Version> allVersions;
+
+    public RemoteModInfoPage(Context context, int id, DownloadPage page, RemoteMod addon, @Nullable RemoteModVersionPage.DownloadCallback callback) {
+        super(context, id, R.layout.page_download_addon_info);
 
         this.page = page;
-        this.repository = page.repository;
+        // 聚合搜索的列表混合两源条目，按条目自身来源取仓库；单源模式即当前仓库
+        this.repository = page.repositoryFor(addon);
         this.addon = addon;
         this.translations = ModTranslations.getTranslationsByRepositoryType(repository.getType());
-        this.version = version;
         this.callback = callback;
 
         create();
@@ -96,11 +103,12 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
         mcmod.setVisibility(mod == null ? View.GONE : View.VISIBLE);
         name.setText(mod != null && LocaleUtils.isChinese(getContext()) ? mod.getDisplayName() : addon.getTitle());
         description.setText(addon.getDescription());
-        List<String> categories = addon.getCategories().stream().map(page::getLocalizedCategory).collect(Collectors.toList());
+        List<String> categories = addon.getCategories().stream().map(it -> page.getLocalizedCategory(addon, it)).collect(Collectors.toList());
         StringBuilder stringBuilder = new StringBuilder();
         categories.forEach(it -> stringBuilder.append(it).append("   "));
         String tag = StringUtils.removeSuffix(stringBuilder.toString(), "   ");
-        this.tag.setText(tag);
+        String sourceLabel = page.getSourceLabel(addon);
+        this.tag.setText(sourceLabel.isEmpty() ? tag : sourceLabel + " · " + tag);
 
         loadModVersions();
         loadScreenshots();
@@ -118,6 +126,7 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
         description = findViewById(R.id.description);
         mcmod = findViewById(R.id.mcmod);
         website = findViewById(R.id.website);
+        favorite = findViewById(R.id.favorite);
         screenshotView = findViewById(R.id.screenshot_recyclerView);
         screenshotLoading = findViewById(R.id.screenshot_loading);
         screenshotRetry = findViewById(R.id.screenshot_retry);
@@ -127,6 +136,8 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
         retry.setOnClickListener(this);
         mcmod.setOnClickListener(this);
         website.setOnClickListener(this);
+        favorite.setOnClickListener(this);
+        refreshFavoriteIcon();
 
         ThemeEngine.getInstance().registerEvent(versionListView, () -> versionListView.setBackgroundTintList(new ColorStateList(new int[][]{{}}, new int[]{ThemeEngine.getInstance().getTheme().getLtColor()})));
 
@@ -143,7 +154,7 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
             list.add(0, recommendedVersion);
         }
         ModGameVersionAdapter adapter = new ModGameVersionAdapter(getContext(), list, v -> {
-            RemoteModVersionPage page = new RemoteModVersionPage(getContext(), FCLPage.PAGE_ID_TEMP, R.layout.page_download_addon_version, new ArrayList<>(versions.get(v)), version, callback, RemoteModInfoPage.this.page);
+            RemoteModVersionPage page = new RemoteModVersionPage(getContext(), FCLPage.PAGE_ID_TEMP, new ArrayList<>(versions.get(v)), callback, RemoteModInfoPage.this.page);
             UIManager.getInstance().getDownloadUI().showTempPage(page);
         });
         versionListView.setAdapter(adapter);
@@ -152,19 +163,29 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
     private void loadModVersions() {
         setLoading(true);
 
-        Task.supplyAsync(() -> {
-            Stream<RemoteMod.Version> versions = addon.getData().loadVersions(repository);
-            return sortVersions(versions);
-        }).whenComplete(Schedulers.androidUIThread(), (result, exception) -> {
-            if (exception == null) {
-                this.versions = result;
-                loadGameVersions();
-                checkInstalled();
-            } else {
-                setFailed();
-            }
-            setLoading(false);
-        }).start();
+        Task.supplyAsync(() -> addon.getData().loadVersions(repository).collect(Collectors.toList()))
+                .whenComplete(Schedulers.androidUIThread(), (result, exception) -> {
+                    if (exception == null) {
+                        this.allVersions = result;
+                        reloadVersions();
+                        checkInstalled();
+                    } else {
+                        setFailed();
+                    }
+                    setLoading(false);
+                }).start();
+    }
+
+    /**
+     * 按当前选中的目录/版本重算推荐版本并刷新版本列表。
+     * 推荐版本在构造加载时计算，页面存续期间目录/版本可能在其他页面被切换
+     * （此时下载页不可见），由 DownloadUI 重新可见时调用
+     */
+    public void reloadVersions() {
+        if (allVersions == null) return;
+        recommendedVersion = null;
+        this.versions = sortVersions(allVersions);
+        loadGameVersions();
     }
 
     private void loadScreenshots() {
@@ -197,7 +218,7 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
                 try {
                     Optional<RemoteMod.Version> remoteVersion = repository.getRemoteVersionByLocalFile(localModFile, localModFile.getFile());
                     if (remoteVersion.isPresent()) {
-                        String modId = remoteVersion.get().getModid();
+                        String modId = remoteVersion.get().modid();
                         if (addon.getModID().equals(modId)) {
                             return remoteVersion.get();
                         }
@@ -213,18 +234,18 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
         }).start();
     }
 
-    private SimpleMultimap<String, RemoteMod.Version, List<RemoteMod.Version>> sortVersions(Stream<RemoteMod.Version> versions) {
+    private SimpleMultimap<String, RemoteMod.Version, List<RemoteMod.Version>> sortVersions(List<RemoteMod.Version> versions) {
         SimpleMultimap<String, RemoteMod.Version, List<RemoteMod.Version>> classifiedVersions
                 = new SimpleMultimap<>(HashMap::new, ArrayList::new);
-        versions.forEach(version -> {
-            for (String gameVersion : version.getGameVersions()) {
+        for (RemoteMod.Version version : versions) {
+            for (String gameVersion : version.gameVersions()) {
                 classifiedVersions.put(gameVersion, version);
             }
-        });
+        }
 
         for (String gameVersion : classifiedVersions.keys()) {
             List<RemoteMod.Version> versionList = classifiedVersions.get(gameVersion);
-            versionList.sort(Comparator.comparing(RemoteMod.Version::getDatePublished).reversed());
+            versionList.sort(Comparator.comparing(RemoteMod.Version::datePublished).reversed());
         }
         if (page.getPageId() != DownloadUI.PAGE_ID_DOWNLOAD_MODPACK) {
             Profile profile = Profiles.getSelectedProfile();
@@ -236,7 +257,7 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
                 if (classifiedVersions.keys().contains(mcv)) {
                     classifiedVersions.get(mcv).stream().filter(v -> {
                         if (page.getPageId() == DownloadUI.PAGE_ID_DOWNLOAD_MOD) {
-                            for (ModLoaderType loader : v.getLoaders()) {
+                            for (ModLoaderType loader : v.loaders()) {
                                 if (modLoaders.contains(loader)) {
                                     recommendedVersion = getContext().getString(R.string.recommend_version) + ": " + mcv + " " + loader.name();
                                     return true;
@@ -290,6 +311,8 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
 
     @Override
     public Task<?> refresh(Object... param) {
+        // 页面重新可见时校准收藏星形（其他页面的收藏变化不触发本页回调）
+        refreshFavoriteIcon();
         return null;
     }
 
@@ -311,5 +334,34 @@ public class RemoteModInfoPage extends FCLPage implements View.OnClickListener {
         if (v == screenshotRetry) {
             loadScreenshots();
         }
+        if (v == favorite) {
+            // 收藏状态实际变更后（协程内）再刷新星形图标
+            DownloadFavoriteEntity entity = FavoriteManager.fromRemoteMod(addon, favoriteType());
+            FavoriteActionsKt.handleFavoriteClick(getContext(), entity, () -> {
+                FavoriteActionsKt.bindFavoriteIcon(favorite, entity.getId());
+                return kotlin.Unit.INSTANCE;
+            });
+        }
+    }
+
+    /** 详情页收藏实体对应的资源类别：与打开此详情的下载页模式一致 */
+    private RemoteModRepository.Type favoriteType() {
+        switch (page.getPageId()) {
+            case DownloadUI.PAGE_ID_DOWNLOAD_MODPACK:
+                return RemoteModRepository.Type.MODPACK;
+            case DownloadUI.PAGE_ID_DOWNLOAD_RESOURCE_PACK:
+                return RemoteModRepository.Type.RESOURCE_PACK;
+            case DownloadUI.PAGE_ID_DOWNLOAD_SHADER_PACK:
+                return RemoteModRepository.Type.SHADER_PACK;
+            case DownloadUI.PAGE_ID_DOWNLOAD_WORLD:
+                return RemoteModRepository.Type.WORLD;
+            default:
+                return RemoteModRepository.Type.MOD;
+        }
+    }
+
+    private void refreshFavoriteIcon() {
+        DownloadFavoriteEntity entity = FavoriteManager.fromRemoteMod(addon, favoriteType());
+        FavoriteActionsKt.bindFavoriteIcon(favorite, entity.getId());
     }
 }

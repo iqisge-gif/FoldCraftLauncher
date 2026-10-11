@@ -2,8 +2,6 @@ package com.tungsten.fcl.control.data;
 
 import static com.tungsten.fcl.util.FXUtils.onInvalidating;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonDeserializationContext;
 import com.google.gson.JsonDeserializer;
@@ -14,7 +12,6 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonSerializationContext;
 import com.google.gson.JsonSerializer;
 import com.google.gson.annotations.JsonAdapter;
-import com.google.gson.reflect.TypeToken;
 import com.tungsten.fclcore.fakefx.beans.InvalidationListener;
 import com.tungsten.fclcore.fakefx.beans.Observable;
 import com.tungsten.fclcore.fakefx.beans.property.ObjectProperty;
@@ -103,6 +100,20 @@ public class ControlViewGroup implements Cloneable, Observable {
         return viewDataProperty.get();
     }
 
+    /**
+     * 完整按键数据（viewData）是否已加载：轻量加载只解析布局元数据，
+     * 布局首次显示/编辑前通过 controllers 异步补全。
+     */
+    private transient boolean dataLoaded;
+
+    public boolean isDataLoaded() {
+        return dataLoaded;
+    }
+
+    public void setDataLoaded(boolean dataLoaded) {
+        this.dataLoaded = dataLoaded;
+    }
+
     public ControlViewGroup(String id) {
         this.id = id;
 
@@ -136,7 +147,8 @@ public class ControlViewGroup implements Cloneable, Observable {
         ControlViewGroup viewGroup = new ControlViewGroup(UUID.randomUUID().toString());
         viewGroup.setName(getName());
         viewGroup.setVisibility(getVisibility());
-        viewGroup.setViewData(getViewData());
+        viewGroup.setViewData(getViewData().clone());
+        viewGroup.setDataLoaded(isDataLoaded());
         return viewGroup;
     }
 
@@ -145,12 +157,11 @@ public class ControlViewGroup implements Cloneable, Observable {
         public JsonElement serialize(ControlViewGroup src, Type typeOfSrc, JsonSerializationContext context) {
             if (src == null) return JsonNull.INSTANCE;
             JsonObject obj = new JsonObject();
-            Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
             obj.addProperty("id", src.getId());
             obj.addProperty("name", src.getName());
             obj.addProperty("visibility", src.getVisibility().toString());
-            obj.add("viewData", gson.toJsonTree(src.getViewData()).getAsJsonObject());
+            obj.add("viewData", new ViewData.Serializer().serialize(src.getViewData(), null, null));
 
             return obj;
         }
@@ -162,12 +173,10 @@ public class ControlViewGroup implements Cloneable, Observable {
             JsonObject obj = (JsonObject) json;
 
             ControlViewGroup viewGroup = new ControlViewGroup(Optional.ofNullable(obj.get("id")).map(JsonElement::getAsString).orElse(UUID.randomUUID().toString()));
-            Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
             viewGroup.setName(Optional.ofNullable(obj.get("name")).map(JsonElement::getAsString).orElse(""));
             viewGroup.setVisibility(Optional.ofNullable(obj.get("visibility")).map(JsonElement::getAsString).orElse(Visibility.VISIBLE.toString()).equals(Visibility.INVISIBLE.toString()) ? Visibility.INVISIBLE : Visibility.VISIBLE);
-            viewGroup.setViewData(gson.fromJson(Optional.ofNullable(obj.get("viewData")).map(JsonElement::getAsJsonObject).orElse(gson.toJsonTree(new ViewData()).getAsJsonObject()), new TypeToken<ViewData>() {
-            }.getType()));
+            viewGroup.setViewData(Optional.ofNullable(obj.get("viewData")).map(JsonElement::getAsJsonObject).map(viewData -> new ViewData.Serializer().deserialize(viewData, null, null)).orElseGet(ViewData::new));
 
             return viewGroup;
         }
@@ -284,8 +293,9 @@ public class ControlViewGroup implements Cloneable, Observable {
         @Override
         public ViewData clone() {
             ViewData data = new ViewData();
-            data.setButtonList(buttonList());
-            data.setDirectionList(directionList());
+            // 按键逐个克隆：列表与元素均与源隔离，编辑副本不会污染源布局
+            data.setButtonList(FXCollections.observableList(buttonList().stream().map(ControlButtonData::clone).collect(Collectors.toList())));
+            data.setDirectionList(FXCollections.observableList(directionList().stream().map(ControlDirectionData::clone).collect(Collectors.toList())));
             return data;
         }
 
@@ -294,14 +304,27 @@ public class ControlViewGroup implements Cloneable, Observable {
             public JsonElement serialize(ViewData src, Type typeOfSrc, JsonSerializationContext context) {
                 if (src == null) return JsonNull.INSTANCE;
                 JsonObject obj = new JsonObject();
-                Gson gson = new GsonBuilder().setPrettyPrinting().create();
 
-                obj.add("buttonList", gson.toJsonTree(new ArrayList<>(src.buttonList()), new TypeToken<ArrayList<ControlButtonData>>() {
-                }.getType()).getAsJsonArray());
-                obj.add("directionList", gson.toJsonTree(new ArrayList<>(src.directionList()), new TypeToken<ArrayList<ControlDirectionData>>() {
-                }.getType()).getAsJsonArray());
+                obj.add("buttonList", toJsonButtonList(src.buttonList()));
+                obj.add("directionList", toJsonDirectionList(src.directionList()));
 
                 return obj;
+            }
+
+            private static JsonArray toJsonButtonList(ObservableList<ControlButtonData> buttons) {
+                JsonArray array = new JsonArray();
+                for (ControlButtonData button : buttons) {
+                    array.add(new ControlButtonData.Serializer().serialize(button, null, null));
+                }
+                return array;
+            }
+
+            private static JsonArray toJsonDirectionList(ObservableList<ControlDirectionData> directions) {
+                JsonArray array = new JsonArray();
+                for (ControlDirectionData direction : directions) {
+                    array.add(new ControlDirectionData.Serializer().serialize(direction, null, null));
+                }
+                return array;
             }
 
             @Override
@@ -311,22 +334,28 @@ public class ControlViewGroup implements Cloneable, Observable {
                 JsonObject obj = (JsonObject) json;
 
                 ViewData data = new ViewData();
-                Gson gson = new GsonBuilder().setPrettyPrinting().create();
-                ObservableList<ControlButtonData> buttonList = FXCollections.observableList(Optional.ofNullable(obj.get("buttonList"))
-                        .map(JsonElement::getAsJsonArray)
-                        .orElse(new JsonArray())
-                        .asList()
-                        .stream()
-                        .parallel()
-                        .map(button -> {
-                            if (button != null) {
-                                return gson.fromJson(button, ControlButtonData.class);
-                            }
-                            throw new JsonParseException("ControlButtonData broken!");
-                        }).collect(Collectors.toList()));
-                data.setButtonList(buttonList);
-                data.setDirectionList(FXCollections.observableList(gson.fromJson(Optional.ofNullable(obj.get("directionList")).map(JsonElement::getAsJsonArray).orElse(new JsonArray()), new TypeToken<ArrayList<ControlDirectionData>>() {
-                }.getType())));
+                // 历史版本崩溃可能留下重复 id 的条目，加载时按 id 去重，避免同一按键渲染/保存两份
+                ArrayList<ControlButtonData> buttonList = new ArrayList<>();
+                JsonArray buttonArray = Optional.ofNullable(obj.get("buttonList")).map(JsonElement::getAsJsonArray).orElseGet(JsonArray::new);
+                for (JsonElement button : buttonArray) {
+                    if (button.isJsonObject()) {
+                        ControlButtonData buttonData = new ControlButtonData.Serializer().deserialize(button, null, null);
+                        if (buttonData != null && buttonList.stream().noneMatch(it -> it.getId().equals(buttonData.getId()))) {
+                            buttonList.add(buttonData);
+                        }
+                    }
+                }
+                data.setButtonList(FXCollections.observableList(buttonList));
+                ArrayList<ControlDirectionData> directionList = new ArrayList<>();
+                for (JsonElement direction : Optional.ofNullable(obj.get("directionList")).map(JsonElement::getAsJsonArray).orElseGet(JsonArray::new)) {
+                    if (direction.isJsonObject()) {
+                        ControlDirectionData directionData = new ControlDirectionData.Serializer().deserialize(direction, null, null);
+                        if (directionData != null && directionList.stream().noneMatch(it -> it.getId().equals(directionData.getId()))) {
+                            directionList.add(directionData);
+                        }
+                    }
+                }
+                data.setDirectionList(FXCollections.observableList(directionList));
 
                 return data;
             }

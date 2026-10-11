@@ -1,11 +1,13 @@
 package com.tungsten.fcl.ui.version;
 
+import android.app.Activity;
 import android.content.Context;
 import android.widget.Toast;
 
-import androidx.appcompat.app.AppCompatDialog;
-
+import com.mio.download.DownloadManager;
+import com.mio.minecraft.VersionDeepCleaner;
 import com.mio.util.ParseUtil;
+import com.tungsten.fcl.FCLApp;
 import com.tungsten.fcl.R;
 import com.tungsten.fcl.activity.MainActivity;
 import com.tungsten.fcl.game.LauncherHelper;
@@ -14,13 +16,11 @@ import com.tungsten.fcl.setting.Profile;
 import com.tungsten.fcl.setting.Profiles;
 import com.tungsten.fcl.ui.TaskDialog;
 import com.tungsten.fcl.ui.UIManager;
-import com.tungsten.fcl.ui.account.CreateAccountDialog;
 import com.tungsten.fcl.ui.download.modpack.LocalModpackPage;
 import com.tungsten.fcl.ui.download.modpack.ModpackSelectionPage;
 import com.tungsten.fcl.ui.manage.ModpackTypeSelectionPage;
 import com.tungsten.fcl.util.TaskCancellationAction;
 import com.tungsten.fclcore.auth.Account;
-import com.tungsten.fclcore.auth.AccountFactory;
 import com.tungsten.fclcore.download.game.GameAssetDownloadTask;
 import com.tungsten.fclcore.mod.RemoteMod;
 import com.tungsten.fclcore.task.FileDownloadTask;
@@ -36,6 +36,7 @@ import com.tungsten.fcllibrary.ui.ProgressDialog;
 
 import java.io.IOException;
 import java.net.URL;
+import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CancellationException;
@@ -48,7 +49,7 @@ public class Versions {
     public static void importModpack(Context context) {
         Profile profile = Profiles.getSelectedProfile();
         if (profile.getRepository().isLoaded()) {
-            ModpackSelectionPage page = new ModpackSelectionPage(context, FCLPage.PAGE_ID_TEMP, R.layout.page_modpack_selection, profile, null);
+            ModpackSelectionPage page = new ModpackSelectionPage(context, FCLPage.PAGE_ID_TEMP, profile, null);
             UIManager.getInstance().getDownloadUI().showTempPage(page);
         }
     }
@@ -58,40 +59,49 @@ public class Versions {
         URL downloadURL;
         try {
             modpack = Files.createTempFile("modpack", ".zip");
-            downloadURL = new URL(file.getFile().getUrl());
+            downloadURL = new URL(file.file().url());
         } catch (IOException e) {
             FCLAlertDialog.Builder builder = new FCLAlertDialog.Builder(context);
             builder.setAlertLevel(FCLAlertDialog.AlertLevel.ALERT);
             builder.setCancelable(false);
             builder.setTitle(context.getString(R.string.download_failed));
-            builder.setMessage(context.getString(R.string.install_failed_downloading_detail, file.getFile().getUrl()) + "\n" + StringUtils.getStackTrace(e));
+            builder.setMessage(context.getString(R.string.install_failed_downloading_detail, file.file().url()) + "\n" + StringUtils.getStackTrace(e));
             builder.setNegativeButton(context.getString(com.tungsten.fcl.R.string.dialog_positive), null);
             builder.create().show();
             return;
         }
 
-        TaskDialog taskDialog = new TaskDialog(context, new TaskCancellationAction(AppCompatDialog::dismiss));
-        taskDialog.setTitle(context.getString(R.string.message_downloading));
-        TaskExecutor executor = new FileDownloadTask(downloadURL, modpack.toFile())
-                .whenComplete(Schedulers.androidUIThread(), e -> {
-                    if (e == null) {
-                        LocalModpackPage page = new LocalModpackPage(context, FCLPage.PAGE_ID_TEMP, R.layout.page_modpack, profile, null, modpack.toFile());
-                        UIManager.getInstance().getDownloadUI().showTempPage(page);
-                    } else if (e instanceof CancellationException) {
+        FileDownloadTask downloadTask = new FileDownloadTask(downloadURL, modpack.toFile());
+        TaskExecutor executor = downloadTask.whenComplete(Schedulers.androidUIThread(), e -> {
+                    if (e instanceof CancellationException) {
+                        modpack.toFile().delete();
                         Toast.makeText(context, context.getString(R.string.message_cancelled), Toast.LENGTH_SHORT).show();
-                    } else {
+                    } else if (e != null) {
+                        modpack.toFile().delete();
                         FCLAlertDialog.Builder builder = new FCLAlertDialog.Builder(context);
                         builder.setAlertLevel(FCLAlertDialog.AlertLevel.ALERT);
                         builder.setCancelable(false);
-                        builder.setTitle(context.getString(R.string.download_failed));
-                        builder.setMessage(context.getString(R.string.install_failed_downloading_detail, file.getFile().getUrl()) + "\n" + StringUtils.getStackTrace(e));
+                        builder.setTitle(context.getString(R.string.install_failed_downloading));
+                        builder.setMessage(context.getString(R.string.install_failed_downloading_detail, file.file().url()) + "\n" + StringUtils.getStackTrace(e));
                         builder.setNegativeButton(context.getString(com.tungsten.fcl.R.string.dialog_positive), null);
                         builder.create().show();
+                    } else {
+                        // 下载完成：保留在下载面板，由用户手动点击安装
+                        Toast.makeText(context, context.getString(R.string.download_ready_to_install), Toast.LENGTH_LONG).show();
                     }
                 }).executor();
-        taskDialog.setExecutor(executor);
-        taskDialog.show();
+        DownloadManager.submit(file.file().filename(), downloadTask, executor,
+                () -> installDownloadedModpack(context, profile, modpack.toFile()),
+                () -> modpack.toFile().delete());
         executor.start();
+    }
+
+    /** 打开已下载整合包的安装页 */
+    private static void installDownloadedModpack(Context context, Profile profile, File modpack) {
+        LocalModpackPage page = new LocalModpackPage(context, FCLPage.PAGE_ID_TEMP, profile, null, modpack);
+        // 切换到下载 UI，让安装页显示在前台
+        UIManager.getInstance().switchUI(UIManager.getInstance().getDownloadUI());
+        UIManager.getInstance().getDownloadUI().showTempPage(page);
     }
 
     public static void deleteVersion(Context context, Profile profile, String version) {
@@ -100,13 +110,46 @@ public class Versions {
 
         FCLAlertDialog.Builder builder = new FCLAlertDialog.Builder(context);
         builder.setAlertLevel(FCLAlertDialog.AlertLevel.ALERT);
-        builder.setMessage(message);
+        builder.setMessage(message + "\n\n" + context.getString(R.string.version_manage_remove_deep_hint));
         builder.setPositiveButton(() -> {
-            ProgressDialog progress = new ProgressDialog(context);
-            Task.runAsync(() -> profile.getRepository().removeVersionFromDisk(version)).whenComplete(Schedulers.androidUIThread(), (e) -> progress.dismiss()).start();
+            DeleteProgressDialog progress = new DeleteProgressDialog(context,
+                    context.getString(R.string.version_manage_remove_progress_title, version));
+            Task.runAsync(() -> {
+                progress.appendLog(context.getString(R.string.version_deep_clean_folder, version));
+                profile.getRepository().removeVersionFromDisk(version);
+            }).whenComplete(Schedulers.androidUIThread(), (e) -> progress.dismiss()).start();
         });
+        builder.setNeutralButton(context.getString(R.string.version_manage_remove_deep), () -> deleteVersionDeep(context, profile, version));
         builder.setNegativeButton(null);
         builder.create().show();
+    }
+
+    /** 深度删除：在版本文件夹之外，一并清理仅被该版本引用的库与资源文件 */
+    private static void deleteVersionDeep(Context context, Profile profile, String version) {
+        DeleteProgressDialog progress = new DeleteProgressDialog(context,
+                context.getString(R.string.version_manage_remove_progress_title, version));
+        Task.supplyAsync(() -> new VersionDeepCleaner(context, profile.getRepository(), progress::appendLog).delete(version))
+                .whenComplete(Schedulers.androidUIThread(), (result, e) -> {
+                    progress.dismiss();
+                    Activity activity = FCLApp.getActivity();
+                    if (activity == null || activity.isDestroyed() || activity.isFinishing()) {
+                        return;
+                    }
+                    FCLAlertDialog.Builder builder = new FCLAlertDialog.Builder(activity);
+                    builder.setCancelable(false);
+                    builder.setNegativeButton(activity.getString(R.string.dialog_positive), null);
+                    if (result != null) {
+                        double freedMb = result.getFreedBytes() / 1024.0 / 1024.0;
+                        builder.setAlertLevel(FCLAlertDialog.AlertLevel.INFO);
+                        builder.setTitle(activity.getString(R.string.version_manage_remove_deep_done_title));
+                        builder.setMessage(activity.getString(R.string.version_manage_remove_deep_done, version, result.getTotalEntries(), freedMb));
+                    } else {
+                        builder.setAlertLevel(FCLAlertDialog.AlertLevel.ALERT);
+                        builder.setTitle(activity.getString(R.string.version_manage_remove_deep_failed_title));
+                        builder.setMessage(activity.getString(R.string.version_manage_remove_deep_failed));
+                    }
+                    builder.create().show();
+                }).start();
     }
 
     public static CompletableFuture<String> renameVersion(Context context, Profile profile, String version) {
@@ -138,7 +181,7 @@ public class Versions {
     }
 
     public static void exportVersion(Context context, Profile profile, String version) {
-        ModpackTypeSelectionPage page = new ModpackTypeSelectionPage(context, FCLPage.PAGE_ID_TEMP, R.layout.page_modpack_type, profile, version);
+        ModpackTypeSelectionPage page = new ModpackTypeSelectionPage(context, FCLPage.PAGE_ID_TEMP, profile, version);
         UIManager.getInstance().getManageUI().showTempPage(page);
     }
 
@@ -167,7 +210,7 @@ public class Versions {
     }
 
     public static void updateVersion(Context context, Profile profile, String version) {
-        ModpackSelectionPage page = new ModpackSelectionPage(context, FCLPage.PAGE_ID_TEMP, R.layout.page_modpack_selection, profile, version);
+        ModpackSelectionPage page = new ModpackSelectionPage(context, FCLPage.PAGE_ID_TEMP, profile, version);
         UIManager.getInstance().getManageUI().showTempPage(page);
     }
 
@@ -228,20 +271,14 @@ public class Versions {
 
     private static void ensureSelectedAccount(Context context, Consumer<Account> action) {
         Account account = Accounts.getSelectedAccount();
-        if (account == null) {
-            CreateAccountDialog dialog = new CreateAccountDialog(context, (AccountFactory<?>) null);
-            dialog.setOnDismissListener(dialogInterface -> {
-                Account newAccount = Accounts.getSelectedAccount();
-                if (newAccount == null) {
-                    // user cancelled operation
-                } else {
-                    action.accept(newAccount);
-                }
-            });
-            dialog.show();
-        } else {
+        if (account != null) {
             action.accept(account);
+            return;
         }
+        // 未创建账户：提示后跳转账户管理页，中止本次启动
+        Toast.makeText(context, R.string.create_account_first, Toast.LENGTH_SHORT).show();
+        UIManager uiManager = UIManager.getInstance();
+        uiManager.switchUI(uiManager.getAccountUI());
     }
 
 }

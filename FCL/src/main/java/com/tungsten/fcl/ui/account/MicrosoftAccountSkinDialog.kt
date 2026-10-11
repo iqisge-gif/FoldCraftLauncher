@@ -7,9 +7,14 @@ import android.graphics.BitmapFactory
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
+import com.mio.skin.SkinRenderer
+import com.mio.skin.restoreSkinSwitches
+import com.mio.util.getScreenHeight
+import com.mio.util.getScreenWidth
 import com.tungsten.fcl.R
 import com.tungsten.fcl.activity.MainActivity
 import com.tungsten.fcl.databinding.DialogMicrosoftAccountSkinBinding
+import com.tungsten.fclauncher.utils.FCLPath
 import com.tungsten.fclcore.auth.AuthenticationException
 import com.tungsten.fclcore.auth.microsoft.MicrosoftAccount
 import com.tungsten.fclcore.auth.microsoft.MicrosoftService.MinecraftProfileResponseCape
@@ -20,7 +25,6 @@ import com.tungsten.fcllibrary.component.dialog.FCLAlertDialog
 import com.tungsten.fcllibrary.component.dialog.FCLDialog
 import com.tungsten.fcllibrary.component.view.FCLButton
 import com.tungsten.fcllibrary.component.view.FCLTextView
-import com.tungsten.fcllibrary.skin.SkinRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -30,8 +34,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URL
 import java.util.logging.Level
-import com.mio.util.getScreenHeight
-import com.mio.util.getScreenWidth
 
 class MicrosoftAccountSkinDialog(
     context: Context,
@@ -54,6 +56,7 @@ class MicrosoftAccountSkinDialog(
 
         renderer = SkinRenderer(context)
         binding.skinView.setRenderer(renderer, 5f)
+        context.restoreSkinSwitches(renderer)
 
         // Button listeners
         binding.skinFilePick.setOnClickListener(this)
@@ -340,7 +343,7 @@ class MicrosoftAccountSkinDialog(
             com.tungsten.fcl.setting.Accounts.localizeErrorMessage(context, e)
         )
         builder.setNegativeButton(
-            context.getString(com.tungsten.fcl.R.string.dialog_positive),
+            context.getString(R.string.dialog_positive),
             null
         )
         builder.create().show()
@@ -353,11 +356,11 @@ class MicrosoftAccountSkinDialog(
                     null,
                     listOf(".png")
                 ) { result ->
-                    val path = result?.get(0)
-                    if (path != null) {
-                        selectedSkinFile = path
-                        binding.skinFilePath.text = path.substringAfterLast('/')
-                        updatePreviewFromFile(path)
+                    val file = result?.get(0)?.toFile(context, File(FCLPath.CACHE_DIR))
+                    if (file != null) {
+                        selectedSkinFile = file.absolutePath
+                        binding.skinFilePath.text = file.name
+                        updatePreviewFromFile(file.absolutePath)
                     }
                 }
             }
@@ -371,6 +374,7 @@ class MicrosoftAccountSkinDialog(
                 builder.setNegativeButton(null)
                 builder.create().show()
             }
+
             binding.hideCapeBtn -> hideCape()
             binding.positive -> dismiss()
         }

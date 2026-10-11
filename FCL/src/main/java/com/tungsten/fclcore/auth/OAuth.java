@@ -44,7 +44,8 @@ public class OAuth {
     private final String accessTokenURL;
     private final String deviceCodeURL;
     private final String tokenURL;
-    public static boolean IS_CANCELED = false;
+    /** 取消标志：UI 线程置位、轮询线程读取，须保证可见性；同一时刻仅支持一次设备码登录 */
+    public static volatile boolean IS_CANCELED = false;
 
     public OAuth(String authorizationURL, String accessTokenURL, String deviceCodeURL, String tokenURL) {
         this.authorizationURL = authorizationURL;
@@ -153,6 +154,8 @@ public class OAuth {
                 continue;
             }
 
+            options.callback.loginCompletedDeviceCode();
+
             return new Result(tokenResponse.accessToken, tokenResponse.refreshToken);
         }
     }
@@ -244,6 +247,11 @@ public class OAuth {
         Session startServer() throws IOException, AuthenticationException;
 
         void grantDeviceCode(String userCode, String verificationURI);
+
+        /**
+         * 设备码轮询拿到 token 时触发，此时浏览器侧认证已完成，可据此关闭登录页
+         */
+        void loginCompletedDeviceCode();
 
         /**
          * Open browser

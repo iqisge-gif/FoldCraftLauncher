@@ -30,6 +30,7 @@ import android.os.Bundle;
 import android.view.View;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.google.gson.GsonBuilder;
 import com.mio.JavaManager;
@@ -37,6 +38,8 @@ import com.mio.data.Renderer;
 import com.mio.manager.RendererManager;
 import com.mio.minecraft.ModCheckException;
 import com.mio.minecraft.ModChecker;
+import com.mio.plugin.NativeLibPlugin;
+import com.mio.util.LoginProgressKt;
 import com.mio.util.ParseUtil;
 import com.tungsten.fcl.FCLApp;
 import com.tungsten.fcl.R;
@@ -52,7 +55,6 @@ import com.tungsten.fcl.ui.TaskDialog;
 import com.tungsten.fcl.ui.UIManager;
 import com.tungsten.fcl.util.TaskCancellationAction;
 import com.tungsten.fclauncher.bridge.FCLBridge;
-import com.tungsten.fclauncher.plugins.NativeLibPlugin;
 import com.tungsten.fclauncher.utils.FCLPath;
 import com.tungsten.fclcore.auth.Account;
 import com.tungsten.fclcore.auth.AuthInfo;
@@ -60,6 +62,7 @@ import com.tungsten.fclcore.auth.AuthenticationException;
 import com.tungsten.fclcore.auth.CharacterDeletedException;
 import com.tungsten.fclcore.auth.CredentialExpiredException;
 import com.tungsten.fclcore.auth.authlibinjector.AuthlibInjectorDownloadException;
+import com.tungsten.fclcore.auth.microsoft.MicrosoftAccount;
 import com.tungsten.fclcore.download.DefaultDependencyManager;
 import com.tungsten.fclcore.download.LibraryAnalyzer;
 import com.tungsten.fclcore.download.MaintainTask;
@@ -68,6 +71,7 @@ import com.tungsten.fclcore.download.game.GameVerificationFixTask;
 import com.tungsten.fclcore.download.game.LibraryDownloadException;
 import com.tungsten.fclcore.game.JavaVersion;
 import com.tungsten.fclcore.game.LaunchOptions;
+import com.tungsten.fclcore.game.Library;
 import com.tungsten.fclcore.game.Version;
 import com.tungsten.fclcore.mod.LocalModFile;
 import com.tungsten.fclcore.mod.ModpackCompletionException;
@@ -107,7 +111,9 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 
 public final class LauncherHelper {
@@ -119,6 +125,7 @@ public final class LauncherHelper {
     private final VersionSetting setting;
     private final TaskDialog launchingStepsPane;
     private double scaleFactor;
+    private double cursorOffset;
 
     public LauncherHelper(Context context, Profile profile, Account account, String selectedVersion) {
         this.context = Objects.requireNonNull(context);
@@ -134,26 +141,47 @@ public final class LauncherHelper {
         LOG.info("Launching game version: " + selectedVersion);
 
         launchingStepsPane.show();
-        launch0();
+        // 版本解析与 mod 全量扫描较重，挪到后台执行，避免阻塞主线程导致弹窗延迟显示
+        Task.runAsync(this::launch0).whenComplete(Schedulers.androidUIThread(), e -> {
+            // 任务链尚未构建时（版本解析/mod 扫描准备段）失败不会触发链内 onStop，在此兜底
+            if (e != null) {
+                launchingStepsPane.dismiss();
+                showLaunchErrorMessage(e);
+            }
+        }).start();
     }
 
     private void launch0() {
         FCLGameRepository repository = profile.getRepository();
         DefaultDependencyManager dependencyManager = profile.getDependency();
-        AtomicReference<Version> version = new AtomicReference<>(MaintainTask.maintain(repository, repository.getResolvedVersion(selectedVersion)));
-        Optional<String> gameVersion = repository.getGameVersion(version.get());
-        boolean integrityCheck = repository.unmarkVersionLaunchedAbnormally(selectedVersion);
+        AtomicReference<Version> version = new AtomicReference<>();
+        AtomicReference<List<LocalModFile>> scannedModsRef = new AtomicReference<>();
+        AtomicReference<Optional<String>> gameVersionRef = new AtomicReference<>();
+        AtomicBoolean integrityCheckRef = new AtomicBoolean();
 
         AtomicReference<JavaVersion> javaVersionRef = new AtomicReference<>();
 
-        TaskExecutor executor = checkGameState(context, setting, version.get())
+        // 版本解析与 mod 扫描较重，作为链首阶段任务执行，弹窗内可实时显示进度
+        TaskExecutor executor = Task.runAsync(() -> version.set(MaintainTask.maintain(repository, repository.getResolvedVersion(selectedVersion))))
+                .withStage("launch.state.version")
+                .thenComposeAsync(() -> {
+                    // 全量 mod 扫描一次，供 lwjgl3ify 补丁、modloader 与渲染器检查共用
+                    List<LocalModFile> scannedMods = scanMods(repository, selectedVersion);
+                    scannedModsRef.set(scannedMods);
+                    // GTNH/lwjgl3ify 兼容：mods 目录存在 lwjgl3ify 时在内存中合并 RFB 启动清单（不落盘），以 RFB + Java17+ 启动
+                    Lwjgl3ifyPatcher.patchIfNeeded(repository, selectedVersion, scannedMods, version);
+                    gameVersionRef.set(repository.getGameVersion(version.get()));
+                    integrityCheckRef.set(repository.unmarkVersionLaunchedAbnormally(selectedVersion));
+                    return null;
+                }).withStage("launch.state.mods")
+                .thenComposeAsync(() -> checkGameState(context, setting, version.get()))
                 .thenComposeAsync(javaVersion -> {
                     javaVersionRef.set(Objects.requireNonNull(javaVersion));
                     version.set(LibFilter.filter(version.get(), false));
                     if (setting.isNotCheckGame())
                         return null;
                     return Task.allOf(
-                            dependencyManager.checkGameCompletionAsync(version.get(), integrityCheck),
+                            dependencyManager.checkGameCompletionAsync(version.get(), integrityCheckRef.get()),
                             Task.composeAsync(() -> {
                                 try {
                                     ModpackConfiguration<?> configuration = ModpackHelper.readModpackConfiguration(repository.getModpackConfiguration(selectedVersion));
@@ -185,21 +213,30 @@ public final class LauncherHelper {
                     }
                     return null;
                 })
-                .thenComposeAsync(() -> gameVersion.map(s -> new GameVerificationFixTask(dependencyManager, s, version.get())).orElse(null))
-                .thenComposeAsync(() -> logIn(context, account).withStage("launch.state.logging_in"))
+                .thenComposeAsync(() -> gameVersionRef.get().map(s -> new GameVerificationFixTask(dependencyManager, s, version.get())).orElse(null))
+                .thenComposeAsync(() -> logIn(context, account,
+                        // 微软登录阶段实时写入启动过程的日志区
+                        text -> Schedulers.androidUIThread().execute(() -> launchingStepsPane.appendLog(text)))
+                        .withStage("launch.state.logging_in"))
                 .thenComposeAsync(authInfo -> Task.supplyAsync(() -> {
+                            MenuSetting menuSetting = null;
                             try {
-                                MenuSetting menuSetting = new GsonBuilder()
+                                menuSetting = new GsonBuilder()
                                         .setPrettyPrinting()
                                         .create()
                                         .fromJson(FileUtils.readText(new File(FCLPath.FILES_DIR + "/menu_setting.json")), MenuSetting.class);
-                                if (menuSetting != null) {
-                                    scaleFactor = menuSetting.getWindowScale();
-                                }
                             } catch (Throwable ignore) {
-                                scaleFactor = 1d;
                             }
-                            LaunchOptions launchOptions = repository.getLaunchOptions(selectedVersion, javaVersionRef.get(), profile.getGameDir(), scaleFactor);
+                            if (menuSetting != null) {
+                                scaleFactor = menuSetting.getWindowScale();
+                                cursorOffset = menuSetting.getCursorOffset();
+                            } else {
+                                scaleFactor = 1d;
+                                cursorOffset = 0d;
+                            }
+                            // 强制分辨率已迁移到游戏内菜单（MenuSetting），启动前同步进静态配置
+                            FCLBridge.initForceResolution(menuSetting);
+                            LaunchOptions launchOptions = repository.getLaunchOptions(selectedVersion, javaVersionRef.get(), profile.getGameDir(), scaleFactor, cursorOffset);
                             FCLGameLauncher launcher = new FCLGameLauncher(
                                     context,
                                     repository,
@@ -207,13 +244,28 @@ public final class LauncherHelper {
                                     authInfo,
                                     launchOptions
                             );
-                            version.get().getLibraries().forEach(library -> {
-                                if (library.getName().startsWith("net.java.dev.jna:jna:")) {
-                                    launcher.setJnaVersion(library.getVersion());
-                                } else if (library.getName().startsWith("org.lwjgl.lwjgl:lwjgl:") || library.getName().startsWith("org.lwjgl:lwjgl:")) {
-                                    launcher.setLwjglVersion(library.getVersion());
+                            String jnaVersion = null;
+                            String lwjglVersion = null;
+                            VersionNumber lwjglMax = null;
+                            for (Library library : version.get().getLibraries()) {
+                                String name = library.getName();
+                                if (name.startsWith("net.java.dev.jna:jna:")) {
+                                    jnaVersion = library.getVersion();
+                                } else if (name.startsWith("org.lwjgl.lwjgl:lwjgl:") || name.startsWith("org.lwjgl:lwjgl:")) {
+                                    // 新旧 LWJGL 声明可能并存(如 lwj3ify 的 3.x 与基础版本的 2.x),取最高版本
+                                    VersionNumber current = VersionNumber.asVersion(library.getVersion());
+                                    if (lwjglMax == null || current.compareTo(lwjglMax) > 0) {
+                                        lwjglMax = current;
+                                        lwjglVersion = library.getVersion();
+                                    }
                                 }
-                            });
+                            }
+                            if (jnaVersion != null) {
+                                launcher.setJnaVersion(jnaVersion);
+                            }
+                            if (lwjglVersion != null) {
+                                launcher.setLwjglVersion(lwjglVersion);
+                            }
                             return launcher;
                         }).thenComposeAsync(launcher -> { // launcher is prev task's result
                             return Task.supplyAsync(launcher::launch);
@@ -221,18 +273,19 @@ public final class LauncherHelper {
                         .thenComposeAsync(fclBridge -> {
                             Renderer renderer = RendererManager.getRenderer(repository.getVersionSetting(selectedVersion).getRenderer());
                             fclBridge.setRenderer(renderer.getName());
-                            return checkRenderer(fclBridge, renderer, repository.getGameVersion(selectedVersion).orElse(""));
+                            return checkRenderer(fclBridge, renderer, repository.getGameVersion(selectedVersion).orElse(""), scannedModsRef.get());
                         }).thenComposeAsync(fclBridge -> checkNativeLibPlugin(fclBridge, repository.getGameVersion(selectedVersion).orElse("")))
                         .thenComposeAsync(fclBridge -> {
                             boolean skip = repository.getVersionSetting(selectedVersion).isNotCheckMod();
                             if (skip) return Task.supplyAsync(() -> fclBridge);
-                            return checkModLoader(fclBridge, repository);
+                            return checkModLoader(fclBridge, repository, scannedModsRef.get());
                         }).thenComposeAsync(fclBridge -> {
                             boolean skip = repository.getVersionSetting(selectedVersion).isNotCheckMod();
-                            return checkMod(fclBridge, repository.getGameVersion(selectedVersion).orElse(""), skip);
+                            return checkMod(fclBridge, repository.getGameVersion(selectedVersion).orElse(""), skip, scannedModsRef.get());
                         }).thenComposeAsync(fclBridge -> {
                             GameOption gameOption = new GameOption(repository.getRunDirectory(selectedVersion).getAbsolutePath());
                             gameOption.set("preferredGraphicsBackend", setting.getGraphicsBackend());
+                            gameOption.set("startedCleanly", "true");
                             gameOption.save();
                             return Task.completed(fclBridge);
                         }).thenAcceptAsync(fclBridge -> Schedulers.androidUIThread().execute(() -> {
@@ -261,89 +314,99 @@ public final class LauncherHelper {
                         }))
                         .withStage("launch.state.waiting_launching"))
                 .withStagesHint(Lang.immutableListOf(
+                        "launch.state.version",
+                        "launch.state.mods",
                         "launch.state.java",
                         "launch.state.dependencies",
                         "launch.state.logging_in",
                         "launch.state.waiting_launching"))
                 .executor();
-        launchingStepsPane.setExecutor(executor, false);
-        executor.addTaskListener(new TaskListener() {
+        // setExecutor 内部更新视图，且须先于 start 装配，整体切回主线程执行
+        Schedulers.androidUIThread().execute(() -> {
+            launchingStepsPane.setExecutor(executor, false);
+            executor.addTaskListener(new TaskListener() {
 
-            @Override
-            public void onStop(boolean success, TaskExecutor executor) {
-                launchingStepsPane.dismiss();
-                if (!success) {
-                    Exception ex = executor.getException();
-                    if (ex != null && !(ex instanceof CancellationException)) {
-                        Schedulers.androidUIThread().execute(() -> {
-                            String message;
-                            if (ex instanceof ModpackCompletionException) {
-                                if (ex.getCause() instanceof FileNotFoundException)
-                                    message = context.getString(R.string.modpack_type_curse_not_found);
-                                else
-                                    message = context.getString(R.string.modpack_type_curse_error);
-                            } else if (ex instanceof LibraryDownloadException) {
-                                message = context.getString(R.string.launch_failed_download_library, ((LibraryDownloadException) ex).getLibrary().getName()) + "\n";
-                                if (ex.getCause() instanceof ResponseCodeException rce) {
-                                    int responseCode = rce.getResponseCode();
-                                    URL url = rce.getUrl();
-                                    if (responseCode == 404)
-                                        message += context.getString(R.string.download_code_404, url);
-                                    else
-                                        message += context.getString(R.string.download_failed, url, responseCode);
-                                } else {
-                                    message += StringUtils.getStackTrace(ex.getCause());
-                                }
-                            } else if (ex instanceof DownloadException) {
-                                URL url = ((DownloadException) ex).getUrl();
-                                if (ex.getCause() instanceof SocketTimeoutException) {
-                                    message = context.getString(R.string.install_failed_downloading_timeout, url);
-                                } else if (ex.getCause() instanceof ResponseCodeException responseCodeException) {
-                                    if (hasStringId(context, "download_code_" + responseCodeException.getResponseCode())) {
-                                        message = getLocalizedText(context, "download_code_" + responseCodeException.getResponseCode(), url);
-                                    } else {
-                                        message = context.getString(R.string.install_failed_downloading_detail, url) + "\n" + StringUtils.getStackTrace(ex.getCause());
-                                    }
-                                } else {
-                                    message = context.getString(R.string.install_failed_downloading_detail, url) + "\n" + StringUtils.getStackTrace(ex.getCause());
-                                }
-                            } else if (ex instanceof GameAssetIndexDownloadTask.GameAssetIndexMalformedException) {
-                                message = context.getString(R.string.assets_index_malformed);
-                            } else if (ex instanceof AuthlibInjectorDownloadException) {
-                                message = context.getString(R.string.account_failed_injector_download_failure);
-                            } else if (ex instanceof CharacterDeletedException) {
-                                message = context.getString(R.string.account_failed_character_deleted);
-                            } else if (ex instanceof ResponseCodeException rce) {
-                                int responseCode = rce.getResponseCode();
-                                URL url = rce.getUrl();
-                                if (responseCode == 404)
-                                    message = context.getString(R.string.download_code_404, url);
-                                else
-                                    message = context.getString(R.string.download_failed, url, responseCode);
-                            } else if (ex instanceof AccessDeniedException) {
-                                message = context.getString(R.string.exception_access_denied, ((AccessDeniedException) ex).getFile());
-                            } else if (ex instanceof ModCheckException) {
-                                message = ((ModCheckException) ex).getReason();
-                            } else if (ex instanceof IllegalArgumentException) {
-                                message = context.getString(R.string.exception_no_suitable_java);
-                            } else {
-                                message = StringUtils.getStackTrace(ex);
-                            }
-
-                            FCLAlertDialog.Builder builder = new FCLAlertDialog.Builder(context);
-                            builder.setAlertLevel(FCLAlertDialog.AlertLevel.ALERT);
-                            builder.setCancelable(false);
-                            builder.setTitle(context.getString(R.string.launch_failed));
-                            builder.setMessage(message);
-                            builder.setNegativeButton(context.getString(com.tungsten.fcl.R.string.dialog_positive), null);
-                            builder.create().show();
-                        });
+                @Override
+                public void onStop(boolean success, TaskExecutor executor) {
+                    launchingStepsPane.dismiss();
+                    if (!success) {
+                        Exception ex = executor.getException();
+                        if (ex != null && !(ex instanceof CancellationException)) {
+                            showLaunchErrorMessage(ex);
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        executor.start();
+            executor.start();
+        });
+    }
+
+    /** 主线程展示启动失败原因（按异常类型整理文案） */
+    private void showLaunchErrorMessage(Exception ex) {
+        Schedulers.androidUIThread().execute(() -> {
+            String message;
+            if (ex instanceof ModpackCompletionException) {
+                if (ex.getCause() instanceof FileNotFoundException)
+                    message = context.getString(R.string.modpack_type_curse_not_found);
+                else
+                    message = context.getString(R.string.modpack_type_curse_error);
+            } else if (ex instanceof LibraryDownloadException) {
+                message = context.getString(R.string.launch_failed_download_library, ((LibraryDownloadException) ex).getLibrary().getName()) + "\n";
+                if (ex.getCause() instanceof ResponseCodeException rce) {
+                    int responseCode = rce.getResponseCode();
+                    URL url = rce.getUrl();
+                    if (responseCode == 404)
+                        message += context.getString(R.string.download_code_404, url);
+                    else
+                        message += context.getString(R.string.download_failed, url, responseCode);
+                } else {
+                    message += StringUtils.getStackTrace(ex.getCause());
+                }
+            } else if (ex instanceof DownloadException) {
+                URL url = ((DownloadException) ex).getUrl();
+                if (ex.getCause() instanceof SocketTimeoutException) {
+                    message = context.getString(R.string.install_failed_downloading_timeout, url);
+                } else if (ex.getCause() instanceof ResponseCodeException responseCodeException) {
+                    if (hasStringId(context, "download_code_" + responseCodeException.getResponseCode())) {
+                        message = getLocalizedText(context, "download_code_" + responseCodeException.getResponseCode(), url);
+                    } else {
+                        message = context.getString(R.string.install_failed_downloading_detail, url) + "\n" + StringUtils.getStackTrace(ex.getCause());
+                    }
+                } else {
+                    message = context.getString(R.string.install_failed_downloading_detail, url) + "\n" + StringUtils.getStackTrace(ex.getCause());
+                }
+            } else if (ex instanceof GameAssetIndexDownloadTask.GameAssetIndexMalformedException) {
+                message = context.getString(R.string.assets_index_malformed);
+            } else if (ex instanceof AuthlibInjectorDownloadException) {
+                message = context.getString(R.string.account_failed_injector_download_failure);
+            } else if (ex instanceof CharacterDeletedException) {
+                message = context.getString(R.string.account_failed_character_deleted);
+            } else if (ex instanceof ResponseCodeException rce) {
+                int responseCode = rce.getResponseCode();
+                URL url = rce.getUrl();
+                if (responseCode == 404)
+                    message = context.getString(R.string.download_code_404, url);
+                else
+                    message = context.getString(R.string.download_failed, url, responseCode);
+            } else if (ex instanceof AccessDeniedException) {
+                message = context.getString(R.string.exception_access_denied, ((AccessDeniedException) ex).getFile());
+            } else if (ex instanceof ModCheckException) {
+                message = ((ModCheckException) ex).getReason();
+            } else if (ex instanceof IllegalArgumentException) {
+                message = context.getString(R.string.exception_no_suitable_java);
+            } else {
+                message = StringUtils.getStackTrace(ex);
+            }
+
+            FCLAlertDialog.Builder builder = new FCLAlertDialog.Builder(context);
+            builder.setAlertLevel(FCLAlertDialog.AlertLevel.ALERT);
+            builder.setCancelable(false);
+            builder.setTitle(context.getString(R.string.launch_failed));
+            builder.setMessage(message);
+            builder.setNegativeButton(context.getString(com.tungsten.fcl.R.string.dialog_positive), null);
+            builder.create().show();
+        });
     }
 
     private Task<FCLBridge> checkPathValid(FCLBridge bridge, FCLGameRepository repository) {
@@ -367,8 +430,23 @@ public final class LauncherHelper {
         });
     }
 
-    private Task<FCLBridge> checkRenderer(FCLBridge bridge, Renderer renderer, String version) {
+    /** 全量扫描 mod 列表，失败返回 null（调用方按需回退） */
+    @Nullable
+    private static List<LocalModFile> scanMods(FCLGameRepository repository, String versionId) {
+        try {
+            return repository.getModManager(versionId).getMods();
+        } catch (IOException | RuntimeException e) {
+            LOG.log(Level.WARNING, "Failed to scan mods before launch", e);
+            return null;
+        }
+    }
+
+    private Task<FCLBridge> checkRenderer(FCLBridge bridge, Renderer renderer, String version, List<LocalModFile> mods) {
         return Task.composeAsync(() -> {
+            if (Lwjgl3ifyPatcher.shouldSkipRendererCheck(mods)) {
+                LOG.log(Level.INFO, "Angelica + lwjgl3ify detected, skip renderer version warning");
+                return Task.completed(bridge);
+            }
             try {
                 CompletableFuture<Task<FCLBridge>> future = new CompletableFuture<>();
                 if (!version.isEmpty()) {
@@ -432,13 +510,12 @@ public final class LauncherHelper {
         });
     }
 
-    private Task<FCLBridge> checkModLoader(FCLBridge bridge, FCLGameRepository repository) {
+    private Task<FCLBridge> checkModLoader(FCLBridge bridge, FCLGameRepository repository, List<LocalModFile> mods) {
         return Task.composeAsync(() -> {
             try {
                 CompletableFuture<Task<FCLBridge>> future = new CompletableFuture<>();
                 boolean modded = LibraryAnalyzer.isModded(repository, repository.getVersion(selectedVersion));
-                List<LocalModFile> mods = repository.getModManager(selectedVersion).getMods();
-                if (!mods.isEmpty() && !modded) {
+                if (mods != null && !mods.isEmpty() && !modded) {
                     Schedulers.androidUIThread().execute(() -> new FCLAlertDialog.Builder(context)
                             .setCancelable(false)
                             .setMessage(context.getString(R.string.message_check_has_modloader))
@@ -461,14 +538,19 @@ public final class LauncherHelper {
         });
     }
 
-    private Task<FCLBridge> checkMod(FCLBridge bridge, String version, boolean skip) {
+    private Task<FCLBridge> checkMod(FCLBridge bridge, String version, boolean skip, List<LocalModFile> mods) {
         return Task.composeAsync(() -> {
             try {
+                List<LocalModFile> modList = mods;
+                if (modList == null) {
+                    // 启动链扫描失败时回退为自行获取（getModManager 每次返回新实例，此处为全量重扫）
+                    modList = Profiles.getSelectedProfile().getRepository().getModManager(Profiles.getSelectedVersion()).getMods();
+                }
                 StringBuilder modCheckerInfo = new StringBuilder();
                 StringBuilder modSummary = new StringBuilder();
                 ModChecker modChecker = new ModChecker(context, version);
                 int count = 0;
-                for (LocalModFile mod : Profiles.getSelectedProfile().getRepository().getModManager(Profiles.getSelectedVersion()).getMods()) {
+                for (LocalModFile mod : modList) {
                     if (!mod.isActive()) {
                         continue;
                     }
@@ -579,8 +661,17 @@ public final class LauncherHelper {
         }).withStage("launch.state.java");
     }
 
-    private static Task<AuthInfo> logIn(Context context, Account account) {
+    /**
+     * 登录账户；progressConsumer 用于接收微软账户的实时登录阶段文字（可为 null）。
+     */
+    private static Task<AuthInfo> logIn(Context context, Account account, Consumer<String> progressConsumer) {
         return Task.composeAsync(() -> {
+            // 微软账户登录期间上报各认证阶段，进度回调在后台登录线程触发
+            boolean withProgress = account instanceof MicrosoftAccount && progressConsumer != null;
+            if (withProgress) {
+                ((MicrosoftAccount) account).setProgressCallback(
+                        stage -> progressConsumer.accept(LoginProgressKt.loginStageText(context, stage)));
+            }
             try {
                 return Task.completed(account.logIn());
             } catch (CredentialExpiredException e) {
@@ -601,6 +692,10 @@ public final class LauncherHelper {
                     dialog.show();
                 });
                 return Task.fromCompletableFuture(future).thenComposeAsync(task -> task);
+            } finally {
+                if (withProgress) {
+                    ((MicrosoftAccount) account).setProgressCallback(null);
+                }
             }
         });
     }
@@ -632,7 +727,7 @@ public final class LauncherHelper {
         @Override
         public void onClick(View view) {
             if (view == retry) {
-                future.complete(logIn(getContext(), account));
+                future.complete(logIn(getContext(), account, null));
             }
             if (view == skip) {
                 try {

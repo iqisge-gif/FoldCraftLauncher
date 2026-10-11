@@ -5,19 +5,23 @@ import android.content.Context.MODE_PRIVATE
 import android.view.View
 import android.widget.Toast
 import androidx.core.content.edit
-import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.mio.device.VulkanCheckManager
+import com.mio.plugin.DriverPlugin.driverList
+import com.mio.plugin.DriverPlugin.selected
 import com.mio.ui.adapter.SpacingItemDecoration
-import com.mio.ui.dialog.DriverSelectDialog
 import com.mio.ui.dialog.JavaManageDialog
 import com.mio.ui.dialog.RendererSelectDialog
+import com.mio.ui.dialog.VulkanCheckDialog
+import com.mio.util.isAdrenoGPU
+import com.mio.util.openLink
 import com.mio.util.showErrorDialog
 import com.mio.util.showItemSelectionDialog
 import com.tungsten.fcl.R
 import com.tungsten.fcl.activity.MainActivity
 import com.tungsten.fcl.control.SelectControllerDialog
-import com.tungsten.fcl.databinding.PageVersionSettingBinding
+import com.tungsten.fcl.databinding.PageSettingListBinding
 import com.tungsten.fcl.setting.Controllers
 import com.tungsten.fcl.setting.Profile
 import com.tungsten.fcl.setting.Profiles
@@ -26,8 +30,6 @@ import com.tungsten.fcl.setting.VersionSetting
 import com.tungsten.fcl.ui.UIManager
 import com.tungsten.fcl.ui.manage.ManageUI.VersionLoadable
 import com.tungsten.fcl.util.WeakListenerHolder
-import com.tungsten.fclauncher.plugins.DriverPlugin.driverList
-import com.tungsten.fclauncher.plugins.DriverPlugin.selected
 import com.tungsten.fclauncher.utils.FCLPath
 import com.tungsten.fclcore.event.Event
 import com.tungsten.fclcore.fakefx.beans.property.BooleanProperty
@@ -41,7 +43,6 @@ import com.tungsten.fclcore.task.Task
 import com.tungsten.fclcore.util.Logging
 import com.tungsten.fclcore.util.io.FileUtils
 import com.tungsten.fclcore.util.platform.MemoryUtils
-import com.tungsten.fcllibrary.component.dialog.EditDialog
 import com.tungsten.fcllibrary.component.dialog.FCLAlertDialog
 import com.tungsten.fcllibrary.component.dialog.FullEditDialog
 import com.tungsten.fcllibrary.component.theme.ThemeEngine
@@ -50,12 +51,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.IOException
-import java.util.Locale
 import java.util.logging.Level
-import com.mio.util.copyFileToDir
-import com.mio.util.isAdrenoGPU
-import com.mio.util.isDocUri
-import com.mio.util.openLink
 
 /**
  * 版本设置页。设置项由 [VersionSettingAdapter] 以 RecyclerView 行级复用渲染，
@@ -64,15 +60,15 @@ import com.mio.util.openLink
 class VersionSettingPage(
     context: Context?,
     id: Int,
-    resId: Int,
     private val globalSetting: Boolean
-) : FCLPage(context, id, resId), VersionLoadable, VersionSettingAdapter.Listener {
+) : FCLPage(context, id, R.layout.page_setting_list), VersionLoadable,
+    VersionSettingAdapter.Listener {
     private lateinit var lastVersionSetting: VersionSetting
     private lateinit var profile: Profile
     private lateinit var listenerHolder: WeakListenerHolder
     private var versionId: String? = null
 
-    private lateinit var binding: PageVersionSettingBinding
+    private lateinit var binding: PageSettingListBinding
     private lateinit var adapter: VersionSettingAdapter
 
     /** 当前版本设置的变更监听（loadVersion 时切换注册对象） */
@@ -90,7 +86,7 @@ class VersionSettingPage(
     }
 
     private fun create() {
-        binding = PageVersionSettingBinding.bind(contentView)
+        binding = PageSettingListBinding.bind(contentView)
         adapter = VersionSettingAdapter(context, globalSetting, this)
         binding.settingList.layoutManager = LinearLayoutManager(context)
         // 行间用间距分隔（ItemDecoration），最后一行不加；同组相邻行间留 1dp 缝并绘制次要色分割线
@@ -103,7 +99,8 @@ class VersionSettingPage(
                     val adapter = parent.adapter as? VersionSettingAdapter
                     if (adapter?.isNextInSameGroup(position) == true) groupDivider else rowSpacing
                 },
-                { ThemeEngine.getInstance().getTheme().color }
+                true,
+                { ThemeEngine.getInstance().getTheme().getColor() }
             )
         )
         // 主题切换时重绘分割线颜色
@@ -138,34 +135,6 @@ class VersionSettingPage(
                 settingsChangeListener = null
             }
         })
-    }
-
-    private fun editForceResolution() {
-        if (lastVersionSetting.isForceResolution) {
-            val preferences = context.getSharedPreferences("launcher", MODE_PRIVATE)
-            val dialog = EditDialog(context) { str ->
-                try {
-                    val split =
-                        str.lowercase(Locale.getDefault()).split("x".toRegex())
-                            .dropLastWhile { it.isEmpty() }.toTypedArray()
-                    if (split.size == 2) {
-                        val w = split[0].toInt()
-                        val h = split[1].toInt()
-                        preferences.edit {
-                            putString("force_resolution", w.toString() + "x" + h)
-                        }
-                    }
-                } catch (e: Exception) {
-                    showErrorDialog(context, e.toString())
-                }
-            }
-            dialog.getEditText().setText(preferences.getString("force_resolution", "1920x1080"))
-            dialog.onCancelListener = {
-                lastVersionSetting.isForceResolution = false
-                adapter.refreshRow(VersionSettingTag.FORCE_RESOLUTION)
-            }
-            dialog.show()
-        }
     }
 
     /** 安装插件的下载来源选择（Github / 网盘） */
@@ -263,19 +232,49 @@ class VersionSettingPage(
             adapter.refreshRow(VersionSettingTag.EDIT_CONTROLLER)
         }
         loadIcon()
+        loadVulkanCheckSummary()
+    }
+
+    /** 读取检测缓存，刷新「检测 Vulkan」行的摘要展示 */
+    private fun loadVulkanCheckSummary() {
+        activity.lifecycleScope.launch {
+            val apiVersion = VulkanCheckManager.loadRecord()?.apiVersion.orEmpty()
+            adapter.vulkanCheckSummary = apiVersion.ifEmpty {
+                context.getString(R.string.settings_fcl_vulkan_check_not_checked)
+            }
+            Schedulers.androidUIThread().execute {
+                adapter.refreshRow(VersionSettingTag.EDIT_VULKAN_CHECK)
+            }
+        }
+    }
+
+    /** 按当前版本设置的驱动状态执行 Vulkan 检测并展示结果 */
+    private fun checkVulkan() {
+        Toast.makeText(context, R.string.vulkan_check_running, Toast.LENGTH_SHORT).show()
+        activity.lifecycleScope.launch {
+            val useTurnip = !lastVersionSetting.isVKDriverSystem
+            val driver = driverList.find { it.driver == lastVersionSetting.driver } ?: driverList.first()
+            val capabilities = VulkanCheckManager.check(useTurnip, driver.path)
+            adapter.vulkanCheckSummary = capabilities?.versionString
+                ?: context.getString(R.string.vulkan_check_profile_unsupport)
+            // 对话框展示实际生效的驱动：Turnip 加载失败回落系统加载器时显示系统驱动
+            val usedCustomDriver = capabilities?.usedCustomDriver == true
+            Schedulers.androidUIThread().execute {
+                adapter.refreshRow(VersionSettingTag.EDIT_VULKAN_CHECK)
+                VulkanCheckDialog(
+                    context, capabilities, usedCustomDriver,
+                    if (usedCustomDriver) driver.driver else null
+                ).show()
+            }
+        }
     }
 
     private fun onExploreIcon() {
         if (versionId == null) return
 
         MainActivity.getInstance().fileLauncher.launchSingleSelection(null, listOf(".png")) {
-            var path = it?.get(0) ?: return@launchSingleSelection
-            val uri = path.toUri()
-            if (isDocUri(uri)) {
-                path =
-                    copyFileToDir(activity, uri, File(FCLPath.CACHE_DIR))
-            }
-            val selectedFile = File(path)
+            val selected = it?.get(0) ?: return@launchSingleSelection
+            val selectedFile = selected.toFile(activity, File(FCLPath.CACHE_DIR))
             val iconFile = profile.repository.getVersionIconFile(versionId)
             try {
                 FileUtils.copyFile(selectedFile, iconFile)
@@ -316,7 +315,7 @@ class VersionSettingPage(
             VersionSettingTag.EDIT_ICON -> onExploreIcon()
             VersionSettingTag.DELETE_ICON -> onDeleteIcon()
             VersionSettingTag.EDIT_JAVA -> {
-                JavaManageDialog(context) {
+                JavaManageDialog(context, lastVersionSetting.java) {
                     lastVersionSetting.java = it
                     adapter.refreshRow(VersionSettingTag.EDIT_JAVA)
                 }.show()
@@ -352,11 +351,13 @@ class VersionSettingPage(
             }
 
             VersionSettingTag.EDIT_BACKEND -> {
+                val backends = listOf("default", "opengl", "vulkan")
                 showItemSelectionDialog(
                     context,
                     context.getString(R.string.settings_fcl_graphics_backend),
-                    listOf("default", "opengl", "vulkan"),
-                    false
+                    backends,
+                    false,
+                    selectedIndex = backends.indexOf(lastVersionSetting.graphicsBackend)
                 ) { _, backendName: String ->
                     lastVersionSetting.graphicsBackend = backendName
                     adapter.refreshRow(VersionSettingTag.EDIT_BACKEND)
@@ -385,16 +386,28 @@ class VersionSettingPage(
             )
 
             VersionSettingTag.EDIT_DRIVER -> {
-                DriverSelectDialog(
+                val versionSetting =
+                    if (globalSetting) Profiles.getSelectedProfile().globalVersionSetting
+                    else Profiles.getSelectedProfile().versionSetting
+                showItemSelectionDialog(
                     context,
-                    globalSetting
-                ) { adapter.refreshRow(VersionSettingTag.EDIT_DRIVER) }.show()
+                    context.getString(R.string.settings_fcl_driver),
+                    driverList.map { it.driver },
+                    false,
+                    selectedIndex = driverList.indexOfFirst { it.driver == versionSetting.driver }
+                ) { position, driver ->
+                    versionSetting.driver = driver
+                    selected = driverList[position]
+                    adapter.refreshRow(VersionSettingTag.EDIT_DRIVER)
+                }
             }
 
             VersionSettingTag.INSTALL_DRIVER -> installDialog(
                 "https://github.com/FCL-Team/FCLDriverPlugin/releases/tag/Turnip",
                 "https://pan.quark.cn/s/d87c59695250"
             )
+
+            VersionSettingTag.EDIT_VULKAN_CHECK -> checkVulkan()
 
             VersionSettingTag.EDIT_ENV -> {
                 val preferences = context.getSharedPreferences("launcher", MODE_PRIVATE)
@@ -445,19 +458,11 @@ class VersionSettingPage(
                 )
             }
 
-            VersionSettingTag.FORCE_RESOLUTION -> {
-                lastVersionSetting.isForceResolution = checked
-                if (checked) editForceResolution()
-            }
-
             else -> {}
         }
     }
 
     override fun onSwitchLongClick(tag: VersionSettingTag) {
-        if (tag == VersionSettingTag.FORCE_RESOLUTION && lastVersionSetting.isForceResolution) {
-            editForceResolution()
-        }
     }
 
     override fun onLongPressEdit(tag: VersionSettingTag) {

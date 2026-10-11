@@ -26,10 +26,11 @@ import android.os.Build;
 
 import com.mio.JavaManager;
 import com.mio.data.Renderer;
+import com.mio.plugin.MioLibPatcherManager;
+import com.mio.plugin.NativeLibPlugin;
 import com.tungsten.fclauncher.FCLConfig;
 import com.tungsten.fclauncher.FCLauncher;
 import com.tungsten.fclauncher.bridge.FCLBridge;
-import com.tungsten.fclauncher.plugins.NativeLibPlugin;
 import com.tungsten.fclauncher.utils.Architecture;
 import com.tungsten.fclauncher.utils.FCLPath;
 import com.tungsten.fclcore.auth.AuthInfo;
@@ -65,7 +66,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TimeZone;
@@ -179,6 +179,7 @@ public class DefaultLauncher {
         res.addDefault("-Dos.name=", "Linux");
         res.addDefault("-Dos.version=Android-", Build.VERSION.RELEASE);
         res.addDefault("-Dorg.lwjgl.opengl.libname=", "${gl_lib_name}");
+        res.addDefault("-Dorg.lwjgl.egl.libname=", "${egl_lib_name}");
         res.addDefault("-Dorg.lwjgl.openal.libname=", context.getApplicationInfo().nativeLibraryDir + "/libopenal.so");
         res.addDefault("-Dorg.lwjgl.freetype.libname=", FCLPath.LWJGL_DIR + "/" + lwjglVersion + "/natives/" + Architecture.archAsStringAndroid(Architecture.getDeviceArchitecture()) + "/libfreetype.so");
         res.addDefault("-Dorg.lwjgl.librarypath=", FCLPath.LWJGL_DIR + "/" + lwjglVersion + "/natives/" + Architecture.archAsStringAndroid(Architecture.getDeviceArchitecture()));
@@ -211,7 +212,10 @@ public class DefaultLauncher {
 //        if (repository.getGameVersion(version).isPresent() && repository.getGameVersion(version).get().startsWith("1.16")) {
 //
 //        }
-        res.add("-javaagent:" + FCLPath.LIB_PATCHER_PATH);
+        if (MioLibPatcherManager.isEnabled()) {
+            res.add("-javaagent:" + FCLPath.LIB_PATCHER_PATH);
+            MioLibPatcherManager.getJvmOptions().forEach(res::add);
+        }
 
         Set<String> classpath = repository.getClasspath(version);
         addLWJGLClassPath(classpath);
@@ -446,14 +450,13 @@ public class DefaultLauncher {
                 finalArgs
         );
         config.setUseVKDriverSystem(options.isVKDriverSystem());
-        config.setPojavBigCore(options.isPojavBigCore());
         config.setInstalledModLoaders(new FCLConfig.InstalledModLoaders(
                 analyzer.has(LibraryAnalyzer.LibraryType.FORGE),
                 analyzer.has(LibraryAnalyzer.LibraryType.CLEANROOM),
                 analyzer.has(LibraryAnalyzer.LibraryType.NEO_FORGE),
                 analyzer.has(LibraryAnalyzer.LibraryType.OPTIFINE),
                 analyzer.has(LibraryAnalyzer.LibraryType.LITELOADER),
-                analyzer.has(LibraryAnalyzer.LibraryType.FABRIC),
+                analyzer.has(LibraryAnalyzer.LibraryType.FABRIC) || analyzer.has(LibraryAnalyzer.LibraryType.LEGACY_FABRIC),
                 analyzer.has(LibraryAnalyzer.LibraryType.QUILT)
         ));
         config.setLwjglVersion(lwjglVersion);

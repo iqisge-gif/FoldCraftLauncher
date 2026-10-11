@@ -1,20 +1,20 @@
 [
   {
     "type": "release",
-    "versionCode": 1328,
-    "versionName": "1.3.2.8",
-    "date": "2026.08.24",
+    "versionCode": 1339,
+    "versionName": "1.3.3.9",
+    "date": "2026.10.10",
     "description": [
       {
         "lang": "en",
-        "text": "(Translated from Chinese by AI)\n1. Main UI architecture refactored: the 8 UI pages are now hosted by ViewPager2, page transitions unified to fade-in & slide-up animations, swipe gesture disabled on the main UI (switching only via the menu).  \n2. Download page fully optimized: the 5 download modes share a single layout instance with tab switching state restored via ViewModel; lighter list layouts, icons decoded at a limited size, image loading paused while scrolling fast for smoother scrolling.  \n3. Settings page refactored to RecyclerView with row-level reuse; the tab collapses/expands as content scrolls; usage descriptions added below setting items.  \n4. Profile/VersionSetting/Theme completed the fakefx migration: refactored to Kotlin + StateFlow, theme storage migrated to DataStore, fixed light/dark mode switching not taking effect.  \n5. Merged the FCLauncher and FCLCore modules into the FCL module, removed FCLPath.CONTEXT; global Context now uses FCLApp.getAppContext()/getActivity().  \n6. The Splash screen now shows loading info and a progress bar.  \n7. Updated LWJGL 3.3.3/3.4.1 merged artifacts with a glfwGetWindowPos stub; removed the runtime jsr305.jar to resolve a package conflict.  \n8. Updated libcc.so, direction controls unified to the ZL2 joystick with sizeType fixed.  \n9. The right-side menu supports two-finger swipe switching and gesture-based show/hide.  \n10. Fixed a main-thread ANR caused by a full mod rescan when navigating back and forth in the mod management page.  \n11. Fixed the version reverting after exiting the launcher, concurrent crashes in the version list and config save spam.  \n12. Fixed offline account cape loading NPE, enlarged version icons on the main UI and SmoothFont font scaling errors after restart.  \n13. Fixed a crash when theme refresh callbacks load after the main UI is destroyed; theme callbacks now use weak references to fix view leaks.  \n14. Fixed the blank mode list on the first switch after the download page rebuilds and jank caused by full-size icon decoding.  \n15. Updated multilingual translations."
+        "text": "(Translated from Chinese by AI)\n1. The right menu's gesture section gained a \"Simultaneous View Control\" toggle: touch-pad dragging and key-based pointer follow are two independent look paths, and with the toggle off (the default) whichever starts dragging first owns look control while the other's deltas are ignored until it is released; turning it on lets both control the view at once, and the setting persists in the in-game menu settings.\n2. Fixed opening folders and links doing nothing on 26.3: links opened by the game through SDL_OpenURL used to be handed straight to the system and are now forwarded to the launcher, which shows the file browser for file: paths and delegates the rest to the system.\n3. Fixed \"hold\" interactions such as Create's numeric settings screen being cut short: switching cursor mode no longer pre-emptively resends mouse-button releases, since a mode switch is not a lost event source - a held button is released when its own source lifts, and only the hover-coordinate snapshot is invalidated.\n4. Fixed mouse buttons synthesized by the touch pad's long-press gesture getting stuck when the cursor mode changed mid-hold: the up/cancel path now releases the synthesized left/right buttons and retracts an untriggered long-press regardless of mode, instead of only in the capture branch."
       },
       {
         "lang": "zh_CN",
-        "text": "(若启动器内下载缓慢请使用网盘下载,64位的请下载arm64，不知道该下哪个的请下载all）\n1.主界面 UI 架构重构：改用 ViewPager2 承载 8 个页面，页面切换统一为淡入上滑过渡动画，主界面禁用滑动手势仅通过菜单切换\n2.下载页全面优化：多个下载模式共享单个布局实例，tab 切换经 ViewModel 恢复状态；列表布局轻量化、图标限制解码尺寸、快速滑动时暂停加载，滚动更流畅\n3.设置页重构为 RecyclerView 行级复用，tab 随内容滚动收起/展开，设置项下方新增作用描述\n4.Profile/VersionSetting/Theme 完成 fakefx 迁移：重构为 Kotlin + StateFlow，主题存储迁移 DataStore，修复亮暗模式切换不生效\n5.合并 FCLauncher 与 FCLCore 模块入 FCL，移除 FCLPath.CONTEXT，全局 Context 改用 FCLApp.getAppContext()/getActivity()\n6.Splash 启动页显示加载信息与进度条\n7.更新 LWJGL 3.3.3/3.4.1 合并产物并补充 glfwGetWindowPos stub，移除运行时 jsr305.jar 解决包冲突\n8.更新 libcc.so，方向控件统一转 ZL2 摇杆并修正 sizeType\n9.右侧菜单支持双指滑动与手势显示/隐藏\n10.修复模组管理页往返切换时全量重扫模组导致的主线程 ANR\n11.修复切换版本后退出启动器版本回退、版本列表并发崩溃与配置保存刷屏\n12.修复离线账户披风加载 NPE、主界面版本图标放大显示不完全、SmoothFont 字体缩放错误\n13.修复主界面销毁后主题刷新回调加载崩溃，主题回调改弱引用修复视图泄漏\n14.修复下载页重建后首次切换模式列表空白、图标全尺寸解码导致的卡顿\n15.更新多语言翻译"
+        "text": "(若启动器内下载缓慢请使用网盘下载,64位的请下载arm64，不知道该下哪个的请下载all）\n1.右菜单手势分类新增\"同时控制视角\"开关：触控板拖动与按键指针跟随是两条独立的转视角路径，默认关闭时先开始拖动的一方独占视角控制权，另一方的增量在占用期间被忽略、抬起后释放；开启后两者可同时转视角，开关状态持久化到游戏菜单设置\n2.修复 26.3 下游戏打开文件夹与链接失效：游戏经 SDL_OpenURL 打开的链接此前被直接交给系统，现转交启动器处理，file: 路径弹文件浏览器、其余交给系统\n3.修复机械动力数值设置界面等\"按住\"交互被瞬间打断：光标模式切换不再抢先补发鼠标键释放，模式切换不等于来源丢失，按住中的键等来源自身抬起时再释放，仅作废悬停坐标快照避免整段位移\n4.修复按住期间切换光标模式导致长按手势合成的鼠标键卡住：抬起与取消事件统一释放合成的左/右键并撤回未触发的长按，不再只在捕获分支处理"
       }
     ],
-    "netdiskUrl": "https://pan.quark.cn/s/37069d0a7a3c",
-    "url": "https://github.com/FCL-Team/FoldCraftLauncher/releases/download/1.3.2.8/FCL-release-1.3.2.8-all.apk"
+    "netdiskUrl": "https://pan.quark.cn/s/664a1ea7792e",
+    "url": "https://github.com/FCL-Team/FoldCraftLauncher/releases/download/1.3.3.9/FCL-release-1.3.3.9-all.apk"
   }
 ]

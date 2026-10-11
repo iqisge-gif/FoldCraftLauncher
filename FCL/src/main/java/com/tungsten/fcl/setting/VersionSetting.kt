@@ -48,8 +48,6 @@ class VersionSetting : Cloneable {
      * 1. Global settings.
      * 2. Version settings.
      * If a version claims that it uses global settings, its version setting will be disabled.
-     *
-     * Defaults false because if one version uses global first, custom version file will not be generated.
      */
     var isUsesGlobal: Boolean = true
         set(value) {
@@ -193,13 +191,6 @@ class VersionSetting : Cloneable {
             changed()
         }
 
-    var isPojavBigCore: Boolean = false
-        set(value) {
-            if (field == value) return
-            field = value
-            changed()
-        }
-
     var isNotCheckMod: Boolean = false
         set(value) {
             if (field == value) return
@@ -207,14 +198,15 @@ class VersionSetting : Cloneable {
             changed()
         }
 
-    var isDebugLog: Boolean = false
+    /** 禁用启动前的 Vulkan 兼容性检测，开启后直接启动游戏 */
+    var isNotCheckVulkan: Boolean = false
         set(value) {
             if (field == value) return
             field = value
             changed()
         }
 
-    var isForceResolution: Boolean = false
+    var isDebugLog: Boolean = false
         set(value) {
             if (field == value) return
             field = value
@@ -266,10 +258,9 @@ class VersionSetting : Cloneable {
             it.controller = controller
             it.renderer = renderer
             it.driver = driver
-            it.isPojavBigCore = isPojavBigCore
             it.isNotCheckMod = isNotCheckMod
+            it.isNotCheckVulkan = isNotCheckVulkan
             it.isDebugLog = isDebugLog
-            it.isForceResolution = isForceResolution
         }
     }
 
@@ -300,10 +291,9 @@ class VersionSetting : Cloneable {
                 addProperty("renderer", src.renderer)
                 addProperty("driver", src.driver)
                 addProperty("isolateGameDir", src.isIsolateGameDir)
-                addProperty("pojavBigCore", src.isPojavBigCore)
                 addProperty("notCheckMod", src.isNotCheckMod)
+                addProperty("notCheckVulkan", src.isNotCheckVulkan)
                 addProperty("debugLog", src.isDebugLog)
-                addProperty("forceResolution", src.isForceResolution)
             }
         }
 
@@ -321,7 +311,7 @@ class VersionSetting : Cloneable {
             )
             if (maxMemoryN <= 0) maxMemoryN = MemoryUtils.findBestRAMAllocation(FCLApp.getAppContext())
             return VersionSetting().also { vs ->
-                vs.isUsesGlobal = json["usesGlobal"]?.asBoolean ?: false
+                vs.isUsesGlobal = json["usesGlobal"]?.asBoolean ?: true
                 vs.javaArgs = json["javaArgs"]?.asString ?: ""
                 vs.minecraftArgs = json["minecraftArgs"]?.asString ?: ""
                 vs.maxMemory = maxMemoryN
@@ -340,10 +330,9 @@ class VersionSetting : Cloneable {
                     json["renderer"]?.asString ?: Renderer.ID_NGGL4ES
                 vs.driver = json["driver"]?.asString ?: "Turnip"
                 vs.isIsolateGameDir = json["isolateGameDir"]?.asBoolean ?: false
-                vs.isPojavBigCore = json["pojavBigCore"]?.asBoolean ?: false
                 vs.isNotCheckMod = json["notCheckMod"]?.asBoolean ?: false
+                vs.isNotCheckVulkan = json["notCheckVulkan"]?.asBoolean ?: false
                 vs.isDebugLog = json["debugLog"]?.asBoolean ?: false
-                vs.isForceResolution = json["forceResolution"]?.asBoolean ?: false
             }
         }
 

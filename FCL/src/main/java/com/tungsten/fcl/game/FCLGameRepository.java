@@ -17,27 +17,26 @@
  */
 package com.tungsten.fcl.game;
 
-import static android.content.Context.MODE_PRIVATE;
 import static com.tungsten.fclcore.util.Logging.LOG;
 
 import android.annotation.SuppressLint;
-import android.content.SharedPreferences;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
-
-import androidx.appcompat.content.res.AppCompatResources;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParseException;
 import com.google.gson.reflect.TypeToken;
 import com.mio.manager.RendererManager;
+import com.mio.util.AndroidUtilKt;
 import com.mio.util.LauncherUtilKt;
+import com.mio.util.PixelIconKt;
 import com.tungsten.fcl.FCLApp;
 import com.tungsten.fcl.R;
 import com.tungsten.fcl.setting.Profile;
 import com.tungsten.fcl.setting.VersionSetting;
-import com.mio.util.AndroidUtilKt;
 import com.tungsten.fclauncher.bridge.FCLBridge;
 import com.tungsten.fclcore.download.LibraryAnalyzer;
 import com.tungsten.fclcore.event.Event;
@@ -51,13 +50,13 @@ import com.tungsten.fclcore.game.VersionNotFoundException;
 import com.tungsten.fclcore.mod.ModAdviser;
 import com.tungsten.fclcore.mod.Modpack;
 import com.tungsten.fclcore.mod.ModpackConfiguration;
-import com.tungsten.fclcore.mod.ModpackProvider;
 import com.tungsten.fclcore.util.Lang;
 import com.tungsten.fclcore.util.StringUtils;
 import com.tungsten.fclcore.util.gson.JsonUtils;
 import com.tungsten.fclcore.util.io.FileUtils;
 import com.tungsten.fclcore.util.platform.MemoryUtils;
 import com.tungsten.fclcore.util.platform.OperatingSystem;
+import com.tungsten.fclcore.util.versioning.GameVersionNumber;
 import com.tungsten.fclcore.util.versioning.VersionNumber;
 
 import org.jetbrains.annotations.Nullable;
@@ -73,7 +72,6 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -172,6 +170,18 @@ public class FCLGameRepository extends DefaultGameRepository {
                 FileUtils.writeText(file, PROFILE);
         } catch (IOException ex) {
             LOG.log(Level.WARNING, "Unable to create launcher_profiles.json, Forge/LiteLoader installer will not work.", ex);
+        }
+    }
+
+    //重新从磁盘读取版本 JSON 并同步内存缓存（含已解析版本缓存）。
+    public void reloadVersionFromDisk(String id) {
+        resolvedVersionCache.remove(id);
+        try {
+            File json = getVersionJson(id);
+            if (!json.exists()) return;
+            versions.put(id, readVersionJson(json));
+        } catch (IOException | JsonParseException e) {
+            LOG.log(Level.WARNING, "Failed to reload version json from disk: " + id, e);
         }
     }
 
@@ -321,9 +331,14 @@ public class FCLGameRepository extends DefaultGameRepository {
     @SuppressLint("UseCompatLoadingForDrawables")
     public Drawable getVersionIconImage(LibraryAnalyzer analyze, String id) {
         File iconFile = getVersionIconFile(id);
-        if (iconFile.exists())
-            return BitmapDrawable.createFromPath(iconFile.getAbsolutePath());
-        else {
+        if (iconFile.exists()) {
+            Bitmap bitmap = BitmapFactory.decodeFile(iconFile.getAbsolutePath());
+            if (bitmap == null)
+                return getDrawable(R.drawable.img_grass);
+            BitmapDrawable drawable = new BitmapDrawable(FCLApp.getAppContext().getResources(), bitmap);
+            PixelIconKt.applyPixelFilter(drawable, bitmap);
+            return drawable;
+        } else {
             if (analyze.has(LibraryAnalyzer.LibraryType.FORGE))
                 return getDrawable(R.drawable.img_forge);
             else if (analyze.has(LibraryAnalyzer.LibraryType.CLEANROOM))
@@ -336,21 +351,36 @@ public class FCLGameRepository extends DefaultGameRepository {
                 return getDrawable(R.drawable.img_optifine);
             else if (analyze.has(LibraryAnalyzer.LibraryType.FABRIC))
                 return getDrawable(R.drawable.img_fabric);
+            else if (analyze.has(LibraryAnalyzer.LibraryType.LEGACY_FABRIC))
+                return getDrawable(R.drawable.img_legacyfabric);
             else if (analyze.has(LibraryAnalyzer.LibraryType.QUILT))
                 return getDrawable(R.drawable.img_quilt);
             else
-                return getDrawable(R.drawable.img_grass);
+                return getVersionIconByGameVersion(id);
         }
     }
 
     /**
-     * 图标资源状态缓存：newDrawable 每次返回独立实例，避免共享 Drawable 的 bounds 被
-     * 其他控件（如版本列表 item 设置 background）修改后互相污染（主界面 icon 放大显示不完全）
+     * 按游戏版本号推导原版图标：愚人节版、快照/预发布版（命令方块）、远古版本（工作台）或常规草方块
+     * <p>
+     * 参考 HMCLGameInstance（https://github.com/HMCL-dev/HMCL/blob/main/HMCL/src/main/java/org/jackhuang/hmcl/game/HMCLGameInstance.java）
      */
-    private static final Map<Integer, Drawable.ConstantState> DRAWABLE_CACHE = new ConcurrentHashMap<>();
+    private Drawable getVersionIconByGameVersion(String id) {
+        GameVersionNumber gameVersion = GameVersionNumber.asGameVersion(getGameVersion(id));
+        if (gameVersion.isAprilFools())
+            return getDrawable(R.drawable.april_fools);
+        else if (gameVersion instanceof GameVersionNumber.LegacySnapshot
+                || gameVersion instanceof GameVersionNumber.Release release
+                && release.getEaType() != GameVersionNumber.Release.ReleaseType.GA)
+            return getDrawable(R.drawable.img_command);
+        else if (gameVersion instanceof GameVersionNumber.Old)
+            return getDrawable(R.drawable.img_craft_table);
+        else
+            return getDrawable(R.drawable.img_grass);
+    }
 
     private Drawable getDrawable(int id) {
-        return DRAWABLE_CACHE.computeIfAbsent(id, k -> AppCompatResources.getDrawable(FCLApp.getAppContext(), k).getConstantState()).newDrawable();
+        return PixelIconKt.pixelAwareIcon(FCLApp.getAppContext(), id);
     }
 
     public void saveVersionSetting(String id) {
@@ -389,9 +419,13 @@ public class FCLGameRepository extends DefaultGameRepository {
             vs.setUsesGlobal(true);
     }
 
-    public LaunchOptions getLaunchOptions(String version, JavaVersion javaVersion, File gameDir, double scaleFactor) {
+    public LaunchOptions getLaunchOptions(String version, JavaVersion javaVersion, File gameDir, double scaleFactor, double cursorOffset) {
         VersionSetting vs = getVersionSetting(version);
-        initForceResolution(vs);
+        int maxMemory = (int) (getAllocatedMemory(
+                vs.getMaxMemory() * 1024L * 1024L,
+                MemoryUtils.getFreeDeviceMemory(FCLApp.getAppContext()) * 1024L * 1024L,
+                vs.isAutoMemory()
+        ) / 1024 / 1024);
         LaunchOptions.Builder builder = new LaunchOptions.Builder()
                 .setGameDir(gameDir)
                 .setJava(javaVersion)
@@ -400,17 +434,14 @@ public class FCLGameRepository extends DefaultGameRepository {
                 .setProfileName(FCLApp.getAppContext().getString(R.string.app_name))
                 .setGameArguments(StringUtils.tokenize(vs.getMinecraftArgs()))
                 .setJavaArguments(StringUtils.tokenize(vs.getJavaArgs()))
-                .setMaxMemory((int) (getAllocatedMemory(
-                        vs.getMaxMemory() * 1024L * 1024L,
-                        MemoryUtils.getFreeDeviceMemory(FCLApp.getAppContext()) * 1024L * 1024L,
-                        vs.isAutoMemory()
-                ) / 1024 / 1024))
-                .setMinMemory(vs.getMaxMemory())
-                .setWidth(vs.isForceResolution() ? FCLBridge.FORCE_RESOLUTION_WIDTH : (int) (AndroidUtilKt.getScreenWidth() * scaleFactor))
-                .setHeight(vs.isForceResolution() ? FCLBridge.FORCE_RESOLUTION_HEIGHT : (int) (AndroidUtilKt.getScreenHeight() * scaleFactor))
+                .setMaxMemory(maxMemory)
+                // Xms=Xmx 会让 G1 按峰值全量提交物理内存且不收缩堆，白占内存易触发系统杀进程与温控，故 Xms 取小值让堆按需增长
+                .setMinMemory(Math.min(512, maxMemory))
+                // 口径与 JVMActivity surface 回调、GameMenu.refreshWindowsSize 一致：宽度含 cursorOffset
+                .setWidth(FCLBridge.FORCE_RESOLUTION ? FCLBridge.FORCE_RESOLUTION_WIDTH : (int) ((AndroidUtilKt.getScreenWidth() + cursorOffset) * scaleFactor))
+                .setHeight(FCLBridge.FORCE_RESOLUTION ? FCLBridge.FORCE_RESOLUTION_HEIGHT : (int) (AndroidUtilKt.getScreenHeight() * scaleFactor))
                 .setServerIp(vs.getServerIp())
                 .setVkDriverSystem(vs.isVKDriverSystem())
-                .setPojavBigCore(vs.isPojavBigCore())
                 .setRenderer(RendererManager.getRenderer(vs.getRenderer()))
                 .setDebugLog(vs.isDebugLog());
 
@@ -491,23 +522,6 @@ public class FCLGameRepository extends DefaultGameRepository {
             return Math.max(minimum, suggested);
         } else {
             return minimum;
-        }
-    }
-
-    private void initForceResolution(VersionSetting vs) {
-        FCLBridge.FORCE_RESOLUTION = vs.isForceResolution();
-        if (FCLBridge.FORCE_RESOLUTION) {
-            try {
-                SharedPreferences preferences = Objects.requireNonNull(FCLApp.getActivity()).getSharedPreferences("launcher", MODE_PRIVATE);
-                String[] split = preferences.getString("force_resolution", "1920x1080").toLowerCase().split("x");
-                if (split.length == 2) {
-                    int w = Integer.parseInt(split[0]);
-                    int h = Integer.parseInt(split[1]);
-                    FCLBridge.FORCE_RESOLUTION_WIDTH = w;
-                    FCLBridge.FORCE_RESOLUTION_HEIGHT = h;
-                }
-            } catch (Exception ignore) {
-            }
         }
     }
 }

@@ -5,7 +5,6 @@ import static com.tungsten.fclcore.util.StringUtils.isNotBlank;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.net.Uri;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
@@ -18,6 +17,9 @@ import androidx.recyclerview.widget.DefaultItemAnimator;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.mio.datastore.ModSortField;
+import com.mio.datastore.ModSortManager;
+import com.mio.dialog.ItemSelectionDialog;
 import com.tungsten.fcl.R;
 import com.tungsten.fcl.activity.MainActivity;
 import com.tungsten.fcl.game.FCLGameRepository;
@@ -25,10 +27,11 @@ import com.tungsten.fcl.setting.Profile;
 import com.tungsten.fcl.ui.TaskDialog;
 import com.tungsten.fcl.ui.UIManager;
 import com.tungsten.fcl.ui.download.DownloadUI;
-import com.mio.util.AndroidUtilKt;
 import com.tungsten.fcl.util.ModTranslations;
 import com.tungsten.fcl.util.TaskCancellationAction;
 import com.tungsten.fclcore.download.LibraryAnalyzer;
+import com.tungsten.fclcore.event.EventBus;
+import com.tungsten.fclcore.event.ModsChangedEvent;
 import com.tungsten.fclcore.fakefx.beans.InvalidationListener;
 import com.tungsten.fclcore.fakefx.beans.binding.Bindings;
 import com.tungsten.fclcore.fakefx.beans.property.BooleanProperty;
@@ -46,6 +49,7 @@ import com.tungsten.fclcore.task.Task;
 import com.tungsten.fclcore.task.TaskExecutor;
 import com.tungsten.fclcore.util.StringUtils;
 import com.tungsten.fclcore.util.io.FileUtils;
+import com.tungsten.fcllibrary.browser.SelectedFile;
 import com.tungsten.fcllibrary.component.dialog.FCLAlertDialog;
 import com.tungsten.fcllibrary.component.ui.FCLPage;
 import com.tungsten.fcllibrary.component.view.FCLButton;
@@ -55,19 +59,23 @@ import com.tungsten.fcllibrary.component.view.FCLLinearLayout;
 import com.tungsten.fcllibrary.component.view.FCLProgressBar;
 import com.tungsten.fcllibrary.component.view.FCLTextView;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.Collator;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.regex.Pattern;
@@ -82,6 +90,8 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
      */
     private static final int BATCH_SIZE = 16;
 
+    private static final Collator COLLATOR = Collator.getInstance();
+
     private final BooleanProperty modded = new SimpleBooleanProperty(this, "modded", false);
     private final ListProperty<ModInfoObject> itemsProperty = new SimpleListProperty<>(FXCollections.observableArrayList());
     /**
@@ -93,7 +103,25 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
     private Profile profile;
     private String versionId;
 
+    /**
+     * 模组文件变化监听（下载完成等外部新增场景）；页面持有强引用，
+     * 保证 registerWeak 的弱引用在页面存活期间不被回收。
+     * 不能用声明处初始化器：onCreate 在超类构造期间回调，那时字段尚未初始化
+     */
+    private Consumer<ModsChangedEvent> modsChangedListener;
+
     private boolean isSearching = false;
+
+    /**
+     * 当前排序维度与方向（全局持久化）；DEFAULT 为加载顺序，其余维度加载时取消增量上屏。
+     * 字段不能带初始化器：onCreate 在超类构造期间回调，声明处初始化会在其之后执行并覆盖赋值
+     */
+    private ModSortField sortField;
+    private boolean sortAscending;
+    /**
+     * 每次 loadMods 递增，用于丢弃在途的排序应用任务，避免旧快照覆盖重扫中的列表
+     */
+    private int loadGeneration = 0;
 
     private FCLTextView warningText;
     private ScrollView left;
@@ -105,6 +133,7 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
     private FCLButton checkUpdateAllButton;
     private FCLButton checkUpdateButton;
     private FCLButton refreshButton;
+    private FCLButton sortButton;
     private FCLButton deleteButton;
     private FCLButton selectAllButton;
     private FCLButton selectInvertButton;
@@ -117,15 +146,14 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
 
     private final LocalModListAdapter adapter;
 
-    public ModListPage(Context context, int id, int resId) {
-        super(context, id, resId);
+    public ModListPage(Context context, int id) {
+        super(context, id, R.layout.page_manage_mod);
         adapter = new LocalModListAdapter(getContext(), this, () -> {
             calculateMod();
             return Unit.INSTANCE;
         });
         recyclerView.setAdapter(adapter);
         recyclerView.setLayoutManager(new LinearLayoutManager(context));
-        adapter.setRecyclerView(recyclerView);
         Bindings.bindContent(adapter.listProperty(), itemsProperty);
 
         adapter.selectedItemsProperty().addListener((InvalidationListener) observable -> switchLayout(adapter.selectedItemsProperty().getSize() > 0));
@@ -146,6 +174,7 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
         checkUpdateAllButton = findViewById(R.id.check_update_all);
         checkUpdateButton = findViewById(R.id.check_update);
         refreshButton = findViewById(R.id.refresh);
+        sortButton = findViewById(R.id.sort);
         deleteButton = findViewById(R.id.delete);
         selectAllButton = findViewById(R.id.select_all);
         selectInvertButton = findViewById(R.id.select_invert);
@@ -159,6 +188,7 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
         checkUpdateAllButton.setOnClickListener(this);
         checkUpdateButton.setOnClickListener(this);
         refreshButton.setOnClickListener(this);
+        sortButton.setOnClickListener(this);
         deleteButton.setOnClickListener(this);
         selectAllButton.setOnClickListener(this);
         selectInvertButton.setOnClickListener(this);
@@ -189,6 +219,12 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
                 search();
             }
         });
+
+        sortField = ModSortManager.getField();
+        sortAscending = ModSortManager.isAscending();
+
+        modsChangedListener = this::onModsChanged;
+        EventBus.EVENT_BUS.channel(ModsChangedEvent.class).registerWeak(modsChangedListener);
     }
 
     @Override
@@ -206,6 +242,9 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
         }
         if (v == refreshButton) {
             refresh();
+        }
+        if (v == sortButton) {
+            showSortDialog();
         }
         if (v == deleteButton) {
             FCLAlertDialog.Builder builder = new FCLAlertDialog.Builder(getContext());
@@ -277,6 +316,7 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
                 checkUpdateAllButton.setEnabled(false);
                 checkUpdateButton.setEnabled(false);
                 refreshButton.setEnabled(false);
+                sortButton.setEnabled(false);
                 deleteButton.setEnabled(false);
                 selectAllButton.setEnabled(false);
                 selectInvertButton.setEnabled(false);
@@ -294,6 +334,7 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
                 checkUpdateAllButton.setEnabled(true);
                 checkUpdateButton.setEnabled(true);
                 refreshButton.setEnabled(true);
+                sortButton.setEnabled(true);
                 deleteButton.setEnabled(true);
                 selectAllButton.setEnabled(true);
                 selectInvertButton.setEnabled(true);
@@ -324,6 +365,12 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
 
     private void loadMods(ModManager modManager) {
         this.modManager = modManager;
+        loadGeneration++;
+        // 排序状态快照，供扫描线程使用
+        ModSortField sortField = this.sortField;
+        boolean sortAscending = this.sortAscending;
+        // 手动排序模式下取消增量上屏：全部解析完成后一次性排序再显示
+        boolean sorting = sortField != null && sortField != ModSortField.DEFAULT;
         CompletableFuture.supplyAsync(() -> {
             try {
                 synchronized (ModListPage.this) {
@@ -333,26 +380,33 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
                         allMods.clear();
                         itemsProperty.clear();
                     });
-                    // 边扫描边分批把已解析的模组追加到列表末尾显示，无需等待全部加载完成
+                    // 默认模式下边扫描边分批把已解析的模组追加到列表末尾显示，无需等待全部加载完成
                     List<ModInfoObject> pending = new ArrayList<>();
                     modManager.refreshMods(mod -> {
                         pending.add(new ModInfoObject(getContext(), mod));
+                        if (sorting) return;
                         if (pending.size() >= BATCH_SIZE) {
                             List<ModInfoObject> batch = new ArrayList<>(pending);
                             pending.clear();
                             Schedulers.androidUIThread().execute(() -> {
-                                allMods.addAll(batch);
-                                itemsProperty.addAll(filterMods(batch));
+                                List<ModInfoObject> fresh = addAllMods(batch);
+                                if (!fresh.isEmpty()) {
+                                    itemsProperty.addAll(filterMods(fresh));
+                                }
                             });
                         }
                     });
-                    if (!pending.isEmpty()) {
-                        List<ModInfoObject> batch = new ArrayList<>(pending);
-                        Schedulers.androidUIThread().execute(() -> {
-                            allMods.addAll(batch);
-                            itemsProperty.addAll(filterMods(batch));
-                        });
-                    }
+                    List<ModInfoObject> batch = new ArrayList<>(pending);
+                    Schedulers.androidUIThread().execute(() -> {
+                        List<ModInfoObject> fresh = addAllMods(batch);
+                        if (sorting) {
+                            // 排序模式下增量批不上屏，全部解析完成后一次性排序显示
+                            sortList(fresh, sortField, sortAscending);
+                            itemsProperty.addAll(filterMods(fresh));
+                        } else if (!fresh.isEmpty()) {
+                            itemsProperty.addAll(filterMods(fresh));
+                        }
+                    });
                     return null;
                 }
             } catch (IOException e) {
@@ -364,7 +418,7 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
             setLoading(false);
             if (exception == null)
                 try {
-                    // 增量阶段已把全部模组追加进列表，无需再整体刷新列表
+                    // 加载过程已把全部模组追加进列表，无需再整体刷新列表
                     calculateMod();
                     showBrokenModsDialog();
                 } catch (Throwable e) {
@@ -373,6 +427,54 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
             else
                 LOG.log(Level.SEVERE, "Failed to load local mod list", exception);
         }, Schedulers.androidUIThread());
+    }
+
+    /** 把一批条目并入 allMods（按文件名去重，防与外部新增事件交错时重复），返回实际新增的部分；仅 UI 线程调用 */
+    private List<ModInfoObject> addAllMods(List<ModInfoObject> batch) {
+        List<ModInfoObject> fresh = new ArrayList<>(batch.size());
+        for (ModInfoObject obj : batch) {
+            boolean exists = allMods.stream().anyMatch(o -> Objects.equals(o.getModInfo().getFileName(), obj.getModInfo().getFileName()));
+            if (!exists) {
+                allMods.add(obj);
+                fresh.add(obj);
+            }
+        }
+        return fresh;
+    }
+
+    /**
+     * 模组文件变化事件：仅响应当前版本的 ModManager；
+     * 事件携带增量模组时直接追加，否则整体重扫
+     */
+    private void onModsChanged(ModsChangedEvent event) {
+        Schedulers.androidUIThread().execute(() -> {
+            if (event.getModManager() != modManager) return;
+            LocalModFile modFile = event.getModFile();
+            if (modFile == null) {
+                loadMods(modManager);
+            } else {
+                appendMod(modFile);
+            }
+        });
+    }
+
+    /** 增量追加一个模组条目（下载完成等外部新增场景）；仅 UI 线程调用 */
+    private void appendMod(LocalModFile modFile) {
+        ModInfoObject obj = new ModInfoObject(getContext(), modFile);
+        List<ModInfoObject> fresh = addAllMods(Collections.singletonList(obj));
+        if (fresh.isEmpty()) return;
+        if (sortField == null || sortField == ModSortField.DEFAULT) {
+            itemsProperty.addAll(filterMods(fresh));
+            if (isSearching) {
+                search();
+            }
+        } else {
+            // 排序模式下按当前排序整体重建视图
+            List<ModInfoObject> display = new ArrayList<>(allMods);
+            sortList(display, sortField, sortAscending);
+            itemsProperty.setAll(filterMods(display));
+        }
+        calculateMod();
     }
 
     /**
@@ -424,42 +526,26 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
         suffix.add(".litemod");
         MainActivity.getInstance().fileLauncher.launchMultiSelection(null, suffix, files -> {
             if (files == null) return;
-            List<Object> res = files.stream().map(Uri::parse).filter(Objects::nonNull).map(uri -> {
-                if (AndroidUtilKt.isDocUri(uri)) {
-                    return uri;
-                } else {
-                    return new File(uri.toString());
-                }
-            }).collect(Collectors.toList());
 
             // It's guaranteed that succeeded and failed are thread safe here.
-            List<String> succeeded = new ArrayList<>(res.size());
+            List<String> succeeded = new ArrayList<>(files.size());
             List<String> failed = new ArrayList<>();
 
             Task.runAsync(() -> {
-                for (Object obj : res) {
-                    if (obj instanceof File file) {
-                        try {
-                            modManager.addMod(file.toPath());
-                            succeeded.add(file.getName());
-                        } catch (Exception e) {
-                            LOG.log(Level.WARNING, "Unable to add mod " + file, e);
-                            failed.add(file.getName());
-
-                            // Actually addMod will not throw exceptions because FileChooser has already filtered files.
+                for (SelectedFile file : files) {
+                    String name = file.fileName(getActivity());
+                    try {
+                        if (file.isContent()) {
+                            modManager.addMod(getActivity(), file.getUri(), name);
+                        } else {
+                            modManager.addMod(file.getFile().toPath());
                         }
-                    } else {
-                        try {
-                            Uri uri = (Uri) obj;
-                            String name = AndroidUtilKt.getFileName(getActivity(), uri);
-                            modManager.addMod(getActivity(), uri, name);
-                            succeeded.add(name);
-                        } catch (Exception e) {
-                            LOG.log(Level.WARNING, "Unable to add mod " + obj.toString(), e);
-                            failed.add(obj.toString());
+                        succeeded.add(name);
+                    } catch (Exception e) {
+                        LOG.log(Level.WARNING, "Unable to add mod " + file.getPath(), e);
+                        failed.add(name);
 
-                            // Actually addMod will not throw exceptions because FileChooser has already filtered files.
-                        }
+                        // Actually addMod will not throw exceptions because FileChooser has already filtered files.
                     }
                 }
             }).withRunAsync(Schedulers.androidUIThread(), () -> {
@@ -532,7 +618,7 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
                             builder.setNegativeButton(getContext().getString(com.tungsten.fcl.R.string.dialog_positive), null);
                             builder.create().show();
                         } else {
-                            ModUpdatesPage page = new ModUpdatesPage(getContext(), FCLPage.PAGE_ID_TEMP, R.layout.page_mod_update, this, modManager, result);
+                            ModUpdatesPage page = new ModUpdatesPage(getContext(), FCLPage.PAGE_ID_TEMP, this, modManager, result);
                             UIManager.getInstance().getManageUI().showTempPage(page);
                         }
                     })
@@ -566,7 +652,7 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
         try {
             modManager.rollback(from, to);
             refresh();
-        } catch (IOException ex) {
+        } catch (Throwable ex) {
             Toast.makeText(getContext(), getContext().getString(R.string.message_failed), Toast.LENGTH_SHORT).show();
         }
     }
@@ -589,8 +675,6 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
         if (StringUtils.isBlank(queryString)) {
             adapter.listProperty().setAll(itemsProperty.get());
         } else {
-            adapter.listProperty().clear();
-
             Predicate<String> predicate;
             if (queryString.startsWith("regex:")) {
                 try {
@@ -605,7 +689,8 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
                 predicate = s -> s.toLowerCase(Locale.ROOT).contains(lowerQueryString);
             }
 
-            // 一次性 setAll 整体替换，避免逐条 add 触发多次列表通知
+            // 一次性 setAll 整体替换（replace change），避免 clear+setAll 两段通知
+            // 触发逐条增删动画造成输入时列表反复闪烁刷新
             List<ModInfoObject> filtered = itemsProperty.get().stream().filter(item ->
                     predicate.test(item.getModInfo().getFileName()) || (item.getRemoteMod() != null && predicate.test(item.getRemoteMod().getTitle()))
             ).collect(Collectors.toList());
@@ -613,17 +698,133 @@ public class ModListPage extends FCLPage implements ManageUI.VersionLoadable, Vi
         }
     }
 
+    /**
+     * 弹出排序选项对话框；再次选择当前排序维度时切换升降序
+     */
+    private void showSortDialog() {
+        List<String> items = new ArrayList<>();
+        for (ModSortField field : ModSortField.values()) {
+            String label = sortFieldLabel(field);
+            if (field == sortField && field != ModSortField.DEFAULT) {
+                label += sortAscending ? " ↑" : " ↓";
+            }
+            items.add(label);
+        }
+        new ItemSelectionDialog(getContext(), getContext().getString(R.string.mods_sort), items, false, sortField.ordinal(),
+                (position, item) -> {
+                    ModSortField clicked = ModSortField.values()[position];
+                    if (clicked == sortField && clicked != ModSortField.DEFAULT) {
+                        sortAscending = !sortAscending;
+                    } else {
+                        sortField = clicked;
+                        // DEFAULT 无方向；切换到新维度时重置为升序
+                        sortAscending = true;
+                    }
+                    ModSortManager.set(sortField, sortAscending);
+                    applySorted();
+                    return Unit.INSTANCE;
+                }).show();
+    }
+
+    /**
+     * 按当前排序状态重排并刷新列表；DEFAULT 时保持加载顺序
+     */
+    private void applySorted() {
+        List<ModInfoObject> snapshot = new ArrayList<>(allMods);
+        ModSortField sortField = this.sortField;
+        boolean sortAscending = this.sortAscending;
+        int generation = loadGeneration;
+        Task.runAsync(() -> sortList(snapshot, sortField, sortAscending))
+                .withRunAsync(Schedulers.androidUIThread(), () -> {
+                    // 期间发生过重新加载时丢弃旧快照
+                    if (generation != loadGeneration) return;
+                    itemsProperty.setAll(filterMods(snapshot));
+                    if (isSearching) {
+                        search();
+                    }
+                })
+                .start();
+    }
+
+    /**
+     * 按指定维度就地排序；大小/修改时间的文件属性在排序前统一读取，避免比较时反复 IO
+     */
+    private static void sortList(List<ModInfoObject> mods, ModSortField sortField, boolean ascending) {
+        if (sortField == ModSortField.DEFAULT) return;
+        Comparator<ModInfoObject> comparator;
+        switch (sortField) {
+            case NAME:
+                comparator = Comparator.comparing((ModInfoObject mod) -> Objects.toString(mod.getModInfo().getName(), ""), COLLATOR::compare);
+                break;
+            case FILE_NAME:
+                comparator = Comparator.comparing((ModInfoObject mod) -> Objects.toString(mod.getModInfo().getFileName(), ""), COLLATOR::compare);
+                break;
+            case SIZE: {
+                Map<Path, Long> sizes = new HashMap<>();
+                comparator = Comparator.comparing(mod -> fileSize(mod.getModInfo().getFile(), sizes));
+                break;
+            }
+            case DATE: {
+                Map<Path, Long> times = new HashMap<>();
+                comparator = Comparator.comparing(mod -> fileTime(mod.getModInfo().getFile(), times));
+                break;
+            }
+            default:
+                return;
+        }
+        mods.sort(ascending ? comparator : comparator.reversed());
+    }
+
+    private static long fileSize(Path file, Map<Path, Long> cache) {
+        Long size = cache.get(file);
+        if (size == null) {
+            try {
+                size = Files.size(file);
+            } catch (IOException e) {
+                size = 0L;
+            }
+            cache.put(file, size);
+        }
+        return size;
+    }
+
+    private static long fileTime(Path file, Map<Path, Long> cache) {
+        Long time = cache.get(file);
+        if (time == null) {
+            try {
+                time = Files.getLastModifiedTime(file).toMillis();
+            } catch (IOException e) {
+                time = 0L;
+            }
+            cache.put(file, time);
+        }
+        return time;
+    }
+
+    private String sortFieldLabel(ModSortField field) {
+        switch (field) {
+            case NAME:
+                return getContext().getString(R.string.mods_sort_name);
+            case FILE_NAME:
+                return getContext().getString(R.string.mods_sort_file_name);
+            case SIZE:
+                return getContext().getString(R.string.mods_sort_size);
+            case DATE:
+                return getContext().getString(R.string.mods_sort_date);
+            default:
+                return getContext().getString(R.string.mods_sort_default);
+        }
+    }
+
+    /**
+     * 依已加载的模组统计启用/禁用计数并刷新复选框文案；仅 UI 线程调用
+     */
     @SuppressLint("SetTextI18n")
     private void calculateMod() {
-        try {
-            List<LocalModFile> mods = modManager.getMods();
-            long activeCount = mods.stream().filter(LocalModFile::isActive).count();
-            enabled.setText(getContext().getString(R.string.enabled) + " (" + activeCount + ")");
-            disabled.setText(getContext().getString(R.string.disabled) + " (" + (mods.size() - activeCount) + ")");
-        } catch (Exception ignore) {
-            enabled.setText(getContext().getString(R.string.enabled));
-            disabled.setText(getContext().getString(R.string.disabled));
-        }
+        if (enabled == null || disabled == null) return;
+        long activeCount = allMods.stream().filter(modInfoObject -> modInfoObject.getModInfo().isActive()).count();
+        enabled.setText(getContext().getString(R.string.enabled) + " (" + activeCount + ")");
+        disabled.setText(getContext().getString(R.string.disabled) + " (" + (allMods.size() - activeCount) + ")");
     }
 
     public static class ModInfoObject {

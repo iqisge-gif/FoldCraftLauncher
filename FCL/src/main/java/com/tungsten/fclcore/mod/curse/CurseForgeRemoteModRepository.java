@@ -27,22 +27,26 @@ import com.tungsten.fcl.R;
 import com.tungsten.fclcore.download.DownloadProvider;
 import com.tungsten.fclcore.mod.LocalModFile;
 import com.tungsten.fclcore.mod.RemoteMod;
+import com.tungsten.fclcore.mod.RemoteModCache;
 import com.tungsten.fclcore.mod.RemoteModRepository;
 import com.tungsten.fclcore.util.MurmurHash2;
 import com.tungsten.fclcore.util.Pair;
 import com.tungsten.fclcore.util.StringUtils;
+import com.tungsten.fclcore.util.gson.JsonUtils;
 import com.tungsten.fclcore.util.io.HttpRequest;
 import com.tungsten.fclcore.util.io.NetworkUtils;
 
 import org.jetbrains.annotations.Nullable;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URL;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -52,6 +56,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
+import java.util.zip.Checksum;
 
 public final class CurseForgeRemoteModRepository implements RemoteModRepository {
 
@@ -122,7 +127,7 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
     @Override
     public SearchResult search(DownloadProvider downloadProvider, String gameVersion, @Nullable RemoteModRepository.Category category, int pageOffset, int pageSize, String searchFilter, SortType sortType, SortOrder sortOrder) throws IOException {
         int categoryId = 0;
-        if (category != null) categoryId = ((CurseAddon.Category) category.self()).getId();
+        if (category != null) categoryId = ((CurseAddon.Category) category.self()).id();
         var query = new LinkedHashMap<String, String>();
         query.put("gameId", "432");
         query.put("classId", Integer.toString(section));
@@ -173,108 +178,237 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
         }
 
         StringUtils.LevCalculator levCalculator = new StringUtils.LevCalculator();
+        String normalizedSearchFilter = normalizeRelevanceKey(lowerCaseSearchFilter);
 
         return new SearchResult(response.data().stream().map(CurseAddon::toMod).map(remoteMod -> {
-            String lowerCaseResult = remoteMod.getTitle().toLowerCase();
-            int diff = levCalculator.calc(lowerCaseSearchFilter, lowerCaseResult);
-
-            for (String s : StringUtils.tokenize(lowerCaseResult)) {
-                if (searchFilterWords.containsKey(s)) {
-                    diff -= WORD_PERFECT_MATCH_WEIGHT * searchFilterWords.get(s) * s.length();
+            String lowerCaseResult = remoteMod.getTitle().toLowerCase(Locale.ROOT);
+            String normalizedResult = normalizeRelevanceKey(lowerCaseResult);
+            int score;
+            if (normalizedResult.equals(normalizedSearchFilter)) {
+                // 归一化后完全一致（忽略空格/标点/大小写，如 dragonminez ↔ DragonMine Z）
+                score = 3_000_000;
+            } else if (normalizedResult.startsWith(normalizedSearchFilter)) {
+                // 归一化前缀命中：同档分相同，稳定排序保持 API 原序（默认热度序），正主通常热度最高
+                score = 2_000_000;
+            } else {
+                // 其余按归一化 Levenshtein 距离（越小越相关）；
+                // 名称分词与查询词完全一致的进一步提前（词长越长、出现次数越多提前越多）
+                int diff = levCalculator.calc(normalizedSearchFilter, normalizedResult);
+                for (String s : StringUtils.tokenize(lowerCaseResult)) {
+                    if (searchFilterWords.containsKey(s)) {
+                        diff -= WORD_PERFECT_MATCH_WEIGHT * searchFilterWords.get(s) * s.length();
+                    }
                 }
+                score = -diff;
+            }
+            return pair(remoteMod, score);
+        }).sorted(Comparator.comparingInt((Pair<RemoteMod, Integer> p) -> p.getValue()).reversed()).map(Pair::getKey), response.data().stream().map(CurseAddon::toMod), calculateTotalPages(response, pageSize));
+    }
+
+    /** 归一化为仅含字母数字的小写串，用于忽略空格/标点/大小写差异的匹配比较 */
+    private static String normalizeRelevanceKey(String s) {
+        StringBuilder result = new StringBuilder(s.length());
+        for (char c : s.toCharArray()) {
+            if (Character.isLetterOrDigit(c)) {
+                result.append(Character.toLowerCase(c));
+            }
+        }
+        return result.toString();
+    }
+
+    /**
+     * 计算 CurseForge 文件指纹：剔除空白符（0x9/0xa/0xd/0x20）后计算 MurmurHash2。
+     * 采用流式两遍扫描（1MB 缓冲），不在内存中保留整个过滤后的文件，避免大文件 OOM。
+     */
+    public static long calculateFingerprint(Path file) throws IOException {
+        try (SeekableByteChannel channel = Files.newByteChannel(file, StandardOpenOption.READ)) {
+            long startPosition = channel.position();
+
+            byte[] bufferArray = new byte[1024 * 1024];
+            ByteBuffer buffer = ByteBuffer.wrap(bufferArray);
+
+            // 第一遍：统计过滤空白符后的总长度
+            long filteredLength = 0;
+            while (channel.read(buffer) > 0) {
+                int len = buffer.position();
+                for (int i = 0; i < len; i++) {
+                    byte b = bufferArray[i];
+                    if (b != 0x9 && b != 0xa && b != 0xd && b != 0x20) {
+                        filteredLength++;
+                    }
+                }
+                buffer.clear();
             }
 
-            return pair(remoteMod, diff);
-        }).sorted(Comparator.comparingInt(Pair::getValue)).map(Pair::getKey), response.data().stream().map(CurseAddon::toMod), calculateTotalPages(response, pageSize));
+            channel.position(startPosition);
+
+            // 第二遍：原地剔除空白符，喂给流式哈希
+            Checksum hasher = MurmurHash2.hash32(filteredLength, 1);
+            while (channel.read(buffer) > 0) {
+                int len = buffer.position();
+
+                int pos = 0;
+                while (pos < len) {
+                    byte b = bufferArray[pos];
+                    if (b == 0x9 || b == 0xa || b == 0xd || b == 0x20) {
+                        break;
+                    }
+                    pos++;
+                }
+
+                if (pos < len) {
+                    int pos2 = pos + 1;
+                    while (pos2 < len) {
+                        byte b = bufferArray[pos2];
+                        if (b != 0x9 && b != 0xa && b != 0xd && b != 0x20) {
+                            bufferArray[pos++] = b;
+                        }
+                        pos2++;
+                    }
+                }
+
+                hasher.update(bufferArray, 0, pos);
+                buffer.clear();
+            }
+            return hasher.getValue();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            throw new IOException(e);
+        }
     }
 
     @Override
     public Optional<RemoteMod.Version> getRemoteVersionByLocalFile(LocalModFile localModFile, Path file) throws IOException {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        try (InputStream stream = Files.newInputStream(file)) {
-            byte[] buf = new byte[1024];
-            int len;
-            while ((len = stream.read(buf, 0, buf.length)) != -1) {
-                for (int i = 0; i < len; i++) {
-                    byte b = buf[i];
-                    if (b != 0x9 && b != 0xa && b != 0xd && b != 0x20) {
-                        baos.write(b);
-                    }
-                }
-            }
-        }
-
-        long hash = Integer.toUnsignedLong(MurmurHash2.hash32(baos.toByteArray(), baos.size(), 1));
-
-        Response<FingerprintMatchesResult> response = withApiKey(HttpRequest.POST(PREFIX + "/v1/fingerprints/432"))
-                .json(mapOf(pair("fingerprints", Collections.singletonList(hash))))
-                .getJson(new TypeToken<Response<FingerprintMatchesResult>>() {
-                }.getType());
-
-        if (response.data().exactMatches() == null || response.data().exactMatches().isEmpty()) {
+        long hash = calculateFingerprint(file);
+        // Workaround for https://github.com/HMCL-dev/HMCL/issues/4597
+        // 1.20.1 Forge GeckoLib（id=388172）与wonderland.jar real one（id=1634457）
+        if (hash == 811513880 || hash == 252446230) {
             return Optional.empty();
         }
 
-        return Optional.of(response.data().exactMatches().get(0).file().toVersion());
+        LOG.info("Matching file " + file.getFileName() + " (fingerprint: " + hash + ") via " + PREFIX + "/v1/fingerprints/432");
+        // 指纹按文件内容寻址，命中结果与负结果（未命中）均永久缓存
+        CurseAddon.LatestFile match = RemoteModCache.getOrFetch("cf:fp:" + hash, RemoteModCache.TTL_PERMANENT,
+                CurseAddon.LatestFile.class, () -> {
+                    Response<FingerprintMatchesResult> response = withApiKey(HttpRequest.POST(PREFIX + "/v1/fingerprints/432"))
+                            .json(mapOf(pair("fingerprints", Collections.singletonList(hash))))
+                            .getJson(new TypeToken<Response<FingerprintMatchesResult>>() {
+                            }.getType());
+
+                    if (response.data().exactMatches() == null || response.data().exactMatches().isEmpty()) {
+                        return null;
+                    }
+                    return response.data().exactMatches().get(0).file();
+                });
+
+        return match == null ? Optional.empty() : Optional.of(match.toVersion());
+    }
+
+    /**
+     * 批量按指纹反查 CurseForge 文件，返回 指纹 → 文件 的映射，用于整合包导出时补全 projectID / fileID。
+     */
+    public static Map<Long, CurseAddon.LatestFile> matchFingerprints(Collection<Long> fingerprints) throws IOException {
+        List<Long> hashes = new ArrayList<>();
+        for (Long hash : fingerprints) {
+            // Workaround for https://github.com/HMCL-dev/HMCL/issues/4597
+            if (hash != 811513880 && hash != 252446230) {
+                hashes.add(hash);
+            }
+        }
+        if (hashes.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        Response<FingerprintMatchesResult> response = withApiKey(HttpRequest.POST(PREFIX + "/v1/fingerprints/432"))
+                .json(mapOf(pair("fingerprints", hashes)))
+                .getJson(new TypeToken<Response<FingerprintMatchesResult>>() {
+                }.getType());
+
+        Map<Long, CurseAddon.LatestFile> result = new HashMap<>();
+        if (response.data().exactMatches() != null) {
+            for (FingerprintMatch match : response.data().exactMatches()) {
+                if (match.file() != null) {
+                    result.put(match.file().fileFingerprint(), match.file());
+                }
+            }
+        }
+        return result;
     }
 
     @Override
     public RemoteMod getModById(String id) throws IOException {
-        Response<CurseAddon> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/mods/" + id))
-                .getJson(new TypeToken<Response<CurseAddon>>() {
-                }.getType());
-        return response.data.toMod();
+        CurseAddon addon = RemoteModCache.getOrFetch("cf:mod:" + id, RemoteModCache.TTL_DETAIL,
+                CurseAddon.class, () -> {
+                    Response<CurseAddon> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/mods/" + id))
+                            .getJson(new TypeToken<Response<CurseAddon>>() {
+                            }.getType());
+                    return response.data;
+                });
+        return addon.toMod();
     }
 
     @Override
     public RemoteMod.File getModFile(String modId, String fileId) throws IOException {
-        Response<CurseAddon.LatestFile> response = withApiKey(HttpRequest.GET(String.format("%s/v1/mods/%s/files/%s", PREFIX, modId, fileId)))
-                .getJson(new TypeToken<Response<CurseAddon.LatestFile>>() {
-                }.getType());
-        return response.data().toVersion().getFile();
+        CurseAddon.LatestFile file = RemoteModCache.getOrFetch("cf:file:" + modId + ":" + fileId, RemoteModCache.TTL_PERMANENT,
+                CurseAddon.LatestFile.class, () -> {
+                    Response<CurseAddon.LatestFile> response = withApiKey(HttpRequest.GET(String.format("%s/v1/mods/%s/files/%s", PREFIX, modId, fileId)))
+                            .getJson(new TypeToken<Response<CurseAddon.LatestFile>>() {
+                            }.getType());
+                    return response.data();
+                });
+        return file.toVersion().file();
     }
 
     @Override
     public Stream<RemoteMod.Version> getRemoteVersionsById(String id) throws IOException {
-        Response<List<CurseAddon.LatestFile>> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/mods/" + id + "/files",
-                pair("pageSize", "10000")))
-                .getJson(new TypeToken<Response<List<CurseAddon.LatestFile>>>() {
-                }.getType());
-        return response.data().stream().map(CurseAddon.LatestFile::toVersion);
+        List<CurseAddon.LatestFile> files = RemoteModCache.getOrFetch("cf:ver:" + id, RemoteModCache.TTL_VERSIONS,
+                JsonUtils.listTypeOf(CurseAddon.LatestFile.class).getType(),
+                () -> {
+                    Response<List<CurseAddon.LatestFile>> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/mods/" + id + "/files",
+                            pair("pageSize", "10000")))
+                            .getJson(new TypeToken<Response<List<CurseAddon.LatestFile>>>() {
+                            }.getType());
+                    return response.data();
+                });
+        return files.stream().map(CurseAddon.LatestFile::toVersion);
     }
 
     public List<CurseAddon.Category> getCategoriesImpl() throws IOException {
-        Response<List<CurseAddon.Category>> categories = withApiKey(HttpRequest.GET(PREFIX + "/v1/categories", pair("gameId", "432")))
-                .getJson(new TypeToken<Response<List<CurseAddon.Category>>>() {
-                }.getType());
-        return reorganizeCategories(categories.data(), section);
+        // 分类几乎不变，长 TTL 缓存；缓存原始扁平列表
+        return RemoteModCache.getOrFetch("cf:cat:" + section, RemoteModCache.TTL_CATEGORIES,
+                JsonUtils.listTypeOf(CurseAddon.Category.class).getType(),
+                () -> {
+                    Response<List<CurseAddon.Category>> response = withApiKey(HttpRequest.GET(PREFIX + "/v1/categories", pair("gameId", "432")))
+                            .getJson(new TypeToken<Response<List<CurseAddon.Category>>>() {
+                            }.getType());
+                    return response.data();
+                });
     }
 
     @Override
     public Stream<RemoteModRepository.Category> getCategories() throws IOException {
-        return getCategoriesImpl().stream().map(CurseAddon.Category::toCategory);
+        return reorganizeCategories(getCategoriesImpl(), section).stream();
     }
 
-    private List<CurseAddon.Category> reorganizeCategories(List<CurseAddon.Category> categories, int rootId) {
-        List<CurseAddon.Category> result = new ArrayList<>();
-
-        Map<Integer, CurseAddon.Category> categoryMap = new HashMap<>();
+    // API 返回扁平列表，按 parentCategoryId 递归组装层级树；父项不存在的条目直接丢弃（与旧逻辑一致）
+    private List<RemoteModRepository.Category> reorganizeCategories(List<CurseAddon.Category> categories, int rootId) {
+        Map<Integer, List<CurseAddon.Category>> childrenMap = new HashMap<>();
         for (CurseAddon.Category category : categories) {
-            categoryMap.put(category.getId(), category);
+            childrenMap.computeIfAbsent(category.parentCategoryId(), k -> new ArrayList<>()).add(category);
         }
-        for (CurseAddon.Category category : categories) {
-            if (category.getParentCategoryId() == rootId) {
-                result.add(category);
-            } else {
-                CurseAddon.Category parentCategory = categoryMap.get(category.getParentCategoryId());
-                if (parentCategory == null) {
-                    // Category list is not correct, so we ignore this item.
-                    continue;
-                }
-                parentCategory.getSubcategories().add(category);
-            }
+
+        List<RemoteModRepository.Category> result = new ArrayList<>();
+        for (CurseAddon.Category category : childrenMap.getOrDefault(rootId, Collections.emptyList())) {
+            result.add(toCategoryTree(category, childrenMap));
         }
         return result;
+    }
+
+    private RemoteModRepository.Category toCategoryTree(CurseAddon.Category category, Map<Integer, List<CurseAddon.Category>> childrenMap) {
+        List<RemoteModRepository.Category> subcategories = new ArrayList<>();
+        for (CurseAddon.Category subcategory : childrenMap.getOrDefault(category.id(), Collections.emptyList())) {
+            subcategories.add(toCategoryTree(subcategory, childrenMap));
+        }
+        return new RemoteModRepository.Category(category, Integer.toString(category.id()), subcategories);
     }
 
     public static final int SECTION_BUKKIT_PLUGIN = 5;
@@ -303,17 +437,17 @@ public final class CurseForgeRemoteModRepository implements RemoteModRepository 
     }
 
     /**
-         * @see <a href="https://docs.curseforge.com/#tocS_FingerprintsMatchesResult">Schema</a>
-         */
-        private record FingerprintMatchesResult(boolean isCacheBuilt,
-                                                List<FingerprintMatch> exactMatches,
-                                                List<Long> exactFingerprints) {
+     * @see <a href="https://docs.curseforge.com/#tocS_FingerprintsMatchesResult">Schema</a>
+     */
+    private record FingerprintMatchesResult(boolean isCacheBuilt,
+                                            List<FingerprintMatch> exactMatches,
+                                            List<Long> exactFingerprints) {
     }
 
     /**
-         * @see <a href="https://docs.curseforge.com/#tocS_FingerprintMatch">Schema</a>
-         */
-        private record FingerprintMatch(int id, CurseAddon.LatestFile file,
-                                        List<CurseAddon.LatestFile> latestFiles) {
+     * @see <a href="https://docs.curseforge.com/#tocS_FingerprintMatch">Schema</a>
+     */
+    private record FingerprintMatch(int id, CurseAddon.LatestFile file,
+                                    List<CurseAddon.LatestFile> latestFiles) {
     }
 }

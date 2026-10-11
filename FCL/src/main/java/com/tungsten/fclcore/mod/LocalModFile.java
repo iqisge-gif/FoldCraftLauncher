@@ -24,6 +24,7 @@ import com.tungsten.fclcore.util.io.FileUtils;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
@@ -52,13 +53,14 @@ public final class LocalModFile implements Comparable<LocalModFile> {
         this.modManager = modManager;
         this.mod = mod;
         this.file = file;
-        this.name = name;
+        // 元数据 record 在真机上 Gson 反序列化缺失字段为 null（构造器不执行），此处归一化回旧类的 "" 默认值
+        this.name = name == null ? "" : name;
         this.description = description;
-        this.authors = authors;
-        this.version = version;
-        this.gameVersion = gameVersion;
-        this.url = url;
-        this.logoPath = logoPath;
+        this.authors = authors == null ? "" : authors;
+        this.version = version == null ? "" : version;
+        this.gameVersion = gameVersion == null ? "" : gameVersion;
+        this.url = url == null ? "" : url;
+        this.logoPath = logoPath == null ? "" : logoPath;
 
         activeProperty = new SimpleBooleanProperty(this, "active", !modManager.isDisabled(file)) {
             @Override
@@ -176,17 +178,19 @@ public final class LocalModFile implements Comparable<LocalModFile> {
         try {
             currentVersion = repository.getRemoteVersionByLocalFile(this, file);
         } catch (Throwable e) {
-            System.gc();
             Logging.LOG.log(Level.SEVERE, e.toString());
         }
 
         if (currentVersion.isEmpty()) return null;
         Optional<RemoteMod.Version> finalCurrentVersion = currentVersion;
-        List<RemoteMod.Version> remoteVersions = repository.getRemoteVersionsById(currentVersion.get().getModid())
-                .filter(version -> version.getGameVersions().contains(gameVersion))
-                .filter(version -> version.getLoaders().contains(getModLoaderType()))
-                .filter(version -> version.getDatePublished().compareTo(finalCurrentVersion.get().getDatePublished()) > 0)
-                .sorted(Comparator.comparing(RemoteMod.Version::getDatePublished).reversed())
+        // 秒级精度比较：网络数据带毫秒/微秒，缓存序列化只保留到秒，精度不一致会让
+        // 同一次发布内的伴生/重传文件首次检查被误判为有更新、二次检查又消失
+        List<RemoteMod.Version> remoteVersions = repository.getRemoteVersionsById(currentVersion.get().modid())
+                .filter(version -> version.gameVersions().contains(gameVersion))
+                .filter(version -> version.loaders().contains(getModLoaderType()))
+                .filter(version -> version.datePublished().truncatedTo(ChronoUnit.SECONDS)
+                        .compareTo(finalCurrentVersion.get().datePublished().truncatedTo(ChronoUnit.SECONDS)) > 0)
+                .sorted(Comparator.comparing(RemoteMod.Version::datePublished).reversed())
                 .collect(Collectors.toList());
         if (remoteVersions.isEmpty()) return null;
         return new ModUpdate(this, currentVersion.get(), remoteVersions);
@@ -244,7 +248,7 @@ public final class LocalModFile implements Comparable<LocalModFile> {
 
         public Description(String text) {
             this.parts = new ArrayList<>();
-            this.parts.add(new Part(text, "black"));
+            this.parts.add(new Part(text == null ? "" : text, "black"));
         }
 
         public Description(List<Part> parts) {

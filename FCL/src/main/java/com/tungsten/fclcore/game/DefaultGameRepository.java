@@ -53,6 +53,8 @@ public class DefaultGameRepository implements GameRepository {
     private File baseDirectory;
     protected Map<String, Version> versions;
     private final ConcurrentHashMap<File, Optional<String>> gameVersions = new ConcurrentHashMap<>();
+    /** 模组管理器按版本缓存，避免每次获取都重建并全量重扫模组目录 */
+    private final Map<String, ModManager> modManagers = new ConcurrentHashMap<>();
 
     public DefaultGameRepository(File baseDirectory) {
         this.baseDirectory = baseDirectory;
@@ -95,10 +97,13 @@ public class DefaultGameRepository implements GameRepository {
 
     @Override
     public File getLibraryFile(Version version, Library lib) {
-        if ("local".equals(lib.getHint()) && lib.getFileName() != null)
-            return new File(getVersionRoot(version.getId()), "libraries/" + lib.getFileName());
-        else
+        if ("local".equals(lib.getHint())) {
+            if (lib.getFileName() != null)
+                return new File(getVersionRoot(version.getId()), "libraries/" + lib.getFileName());
+            return new File(getVersionRoot(version.getId()), "libraries/" + lib.getArtifact().getFileName());
+        } else {
             return new File(getLibrariesDirectory(version), lib.getPath());
+        }
     }
 
     public Path getArtifactFile(Version version, Artifact artifact) {
@@ -215,6 +220,7 @@ public class DefaultGameRepository implements GameRepository {
                     FileUtils.writeText(json, JsonUtils.GSON.toJson(version.setInheritsFrom(to)));
                 }
             }
+            modManagers.remove(from);
             return true;
         } catch (IOException | JsonParseException | VersionNotFoundException |
                  InvalidPathException e) {
@@ -236,6 +242,7 @@ public class DefaultGameRepository implements GameRepository {
 
         try {
             versions.remove(id);
+            modManagers.remove(id);
 
             // remove json files first to ensure FCL will not recognize this folder as a valid version.
             List<File> jsons = FileUtils.listFilesByExtension(removedFile, "json");
@@ -471,7 +478,10 @@ public class DefaultGameRepository implements GameRepository {
     }
 
     public ModManager getModManager(String version) {
-        return new ModManager(this, version);
+        // 未选择版本时不入缓存（ConcurrentHashMap 不允许 null 键），返回临时实例，与缓存化前行为一致
+        if (version == null)
+            return new ModManager(this, null);
+        return modManagers.computeIfAbsent(version, v -> new ModManager(this, v));
     }
 
     @Override

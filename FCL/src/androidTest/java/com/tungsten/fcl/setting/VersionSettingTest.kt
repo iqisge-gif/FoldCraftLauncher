@@ -38,7 +38,6 @@ class VersionSettingTest {
         val vs = VersionSetting()
         assertTrue(vs.isUsesGlobal)
         assertEquals("Auto", vs.java)
-        assertEquals("", vs.uuid)
         assertEquals(defaultMemory(), vs.maxMemory)
         assertNull(vs.minMemory)
         assertTrue(vs.isAutoMemory)
@@ -53,7 +52,6 @@ class VersionSettingTest {
         assertEquals("00000000", vs.controller)
         assertEquals(Renderer.ID_NGGL4ES, vs.renderer)
         assertEquals("Turnip", vs.driver)
-        assertFalse(vs.isPojavBigCore)
         assertFalse(vs.isNotCheckMod)
         assertFalse(vs.isDebugLog)
         assertFalse(vs.isForceResolution)
@@ -83,12 +81,10 @@ class VersionSettingTest {
             vs.controller = "12345678"
             vs.renderer = "gl4es"
             vs.driver = "Mesa"
-            vs.isPojavBigCore = true
-            vs.uuid = "uuid-1"
             vs.isNotCheckMod = true
             vs.isDebugLog = true
             vs.isForceResolution = true
-            assertEquals(21, notified.get())
+            assertEquals(19, notified.get())
         } finally {
             vs.removeOnChangeListener(listener)
         }
@@ -167,8 +163,6 @@ class VersionSettingTest {
             controller = "12345678"
             renderer = "gl4es"
             driver = "Mesa"
-            isPojavBigCore = true
-            uuid = "uuid-1"
             isNotCheckMod = true
             isDebugLog = true
             isForceResolution = true
@@ -191,8 +185,6 @@ class VersionSettingTest {
         assertEquals(vs.controller, copy.controller)
         assertEquals(vs.renderer, copy.renderer)
         assertEquals(vs.driver, copy.driver)
-        assertEquals(vs.isPojavBigCore, copy.isPojavBigCore)
-        assertEquals(vs.uuid, copy.uuid)
         assertEquals(vs.isNotCheckMod, copy.isNotCheckMod)
         assertEquals(vs.isDebugLog, copy.isDebugLog)
         assertEquals(vs.isForceResolution, copy.isForceResolution)
@@ -223,8 +215,6 @@ class VersionSettingTest {
             controller = "12345678"
             renderer = "gl4es"
             driver = "Mesa"
-            isPojavBigCore = true
-            uuid = "uuid-1"
             isNotCheckMod = true
             isDebugLog = true
             isForceResolution = true
@@ -246,8 +236,6 @@ class VersionSettingTest {
         assertEquals("12345678", restored.controller)
         assertEquals("gl4es", restored.renderer)
         assertEquals("Mesa", restored.driver)
-        assertTrue(restored.isPojavBigCore)
-        assertEquals("uuid-1", restored.uuid)
         assertTrue(restored.isNotCheckMod)
         assertTrue(restored.isDebugLog)
         assertTrue(restored.isForceResolution)

@@ -9,14 +9,11 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
-import android.view.View
 import android.widget.Toast
-import androidx.annotation.StringRes
 import androidx.core.app.ActivityCompat
 import androidx.core.app.ActivityOptionsCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
-import androidx.core.graphics.ColorUtils
 import androidx.core.net.toUri
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
@@ -24,6 +21,7 @@ import com.mio.JavaManager
 import com.mio.manager.RendererManager
 import com.mio.util.ImageUtil
 import com.mio.util.getFileName
+import com.mio.util.getSystemDnsServerAddresses
 import com.tungsten.fcl.R
 import com.tungsten.fcl.databinding.ActivitySplashBinding
 import com.tungsten.fcl.fragment.EulaFragment
@@ -50,11 +48,6 @@ import java.util.logging.Level
 
 @SuppressLint("CustomSplashScreen")
 class SplashActivity : FCLActivity() {
-    companion object {
-        /** enterLauncher 内的加载步骤总数，进度按步骤均分 */
-        private const val LOADING_TOTAL = 5
-    }
-
     var lwjgl: Boolean = false
     var cacio: Boolean = false
     var cacio17: Boolean = false
@@ -72,10 +65,6 @@ class SplashActivity : FCLActivity() {
         binding = ActivitySplashBinding.inflate(layoutInflater)
         sharedPreferences = getSharedPreferences("launcher", MODE_PRIVATE)
         setContentView(binding.root)
-        ThemeEngine.getInstance().registerEvent(binding.loadingProgress) {
-            refreshLoadingProgressTheme()
-        }
-        refreshLoadingProgressTheme()
         ImageUtil.loadInto(
             binding.background, ThemeEngine.getInstance().getTheme().getBackground(this)
         )
@@ -127,33 +116,28 @@ class SplashActivity : FCLActivity() {
     }
 
     fun start() {
+        // init 协程可能在 Activity 转后台（onSaveInstanceState 之后）才恢复，Splash 流程无需保留事务状态，允许状态丢失
         if (sharedPreferences.getBoolean("isFirstLaunch", true)) {
             supportFragmentManager.beginTransaction()
                 .setCustomAnimations(R.anim.frag_start_anim, R.anim.frag_stop_anim)
-                .replace(R.id.fragment, EulaFragment::class.java, null).commit()
+                .replace(R.id.fragment, EulaFragment::class.java, null).commitAllowingStateLoss()
         } else {
             supportFragmentManager.beginTransaction()
                 .setCustomAnimations(R.anim.frag_start_anim, R.anim.frag_stop_anim)
-                .replace(R.id.fragment, RuntimeFragment::class.java, null).commit()
+                .replace(R.id.fragment, RuntimeFragment::class.java, null)
+                .commitAllowingStateLoss()
         }
     }
 
-
     fun enterLauncher() {
-        binding.loadingPanel.visibility = View.VISIBLE
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
-                updateLoading(R.string.splash_loading_renderer, 1)
                 RendererManager.init(this@SplashActivity)
-                updateLoading(R.string.splash_loading_java, 2)
                 JavaManager.init()
-                updateLoading(R.string.message_loading_controllers, 3)
                 Controllers.init()
-                updateLoading(R.string.splash_loading_config, 4)
                 runCatching { ConfigHolder.init() }.exceptionOrNull()?.let {
                     Logging.LOG.log(Level.WARNING, it.message)
                 }
-                updateLoading(R.string.splash_loading_cache, 5)
                 if (System.currentTimeMillis() - sharedPreferences.getLong(
                         "clear_cache", 0L
                     ) >= 3 * 1000 * 60 * 60 * 24
@@ -170,27 +154,6 @@ class SplashActivity : FCLActivity() {
             )
             finish()
         }
-    }
-
-    /** 更新加载信息区：当前步骤文案、步骤计数与进度条（进度按步骤均匀划分，平滑动画过渡） */
-    @SuppressLint("SetTextI18n")
-    private suspend fun updateLoading(@StringRes textRes: Int, step: Int) {
-        withContext(Dispatchers.Main) {
-            binding.loadingInfo.setText(textRes)
-            binding.loadingCount.text = "$step/$LOADING_TOTAL"
-            binding.loadingProgress.setProgressCompat(
-                step * binding.loadingProgress.max / LOADING_TOTAL, true
-            )
-        }
-    }
-
-    /** 进度条跟随主题：主色系三段渐变指示器 + 半透明主色轨道 */
-    private fun refreshLoadingProgressTheme() {
-        val theme = ThemeEngine.getInstance().getTheme()
-        binding.loadingProgress.setIndicatorColor(theme.dkColor, theme.color, theme.ltColor)
-        binding.loadingProgress.trackColor = ColorUtils.setAlphaComponent(
-            theme.color, 51
-        )
     }
 
     private fun handleModpack(newIntent: Intent): Intent {
@@ -289,22 +252,32 @@ class SplashActivity : FCLActivity() {
             java21 = RuntimeUtils.isLatest(FCLPath.JAVA_21_PATH, "/assets/app_runtime/java/jre21")
             java25 = RuntimeUtils.isLatest(FCLPath.JAVA_25_PATH, "/assets/app_runtime/java/jre25")
             jna = RuntimeUtils.isLatest(FCLPath.JNA_PATH, "/assets/app_runtime/jna")
-            if (!File(FCLPath.JAVA_PATH, "resolv.conf").exists()) {
+            val resolvFile = File(FCLPath.JAVA_PATH, "resolv.conf")
+            val servers = buildSet {
+                getSystemDnsServerAddresses()
+                    // JNDI DNS 的 nameserver 解析无法处理裸 IPv6 地址，仅保留 IPv4
+                    ?.filterNot { it.contains(':') }
+                    ?.let { addAll(it) }
+
+                // 按地区获取公共 DNS
                 if (LocaleUtils.getSystemLocale().displayName != Locale.CHINA.displayName) {
-                    FileUtils.writeText(
-                        File(FCLPath.JAVA_PATH + "/resolv.conf"), """
-     nameserver 1.1.1.1
-     nameserver 1.0.0.1
-     """.trimIndent()
-                    )
+                    add("1.1.1.1")
+                    add("1.0.0.1")
                 } else {
-                    FileUtils.writeText(
-                        File(FCLPath.JAVA_PATH + "/resolv.conf"), """
-     nameserver 8.8.8.8
-     nameserver 8.8.4.4
-     """.trimIndent()
-                    )
+                    add("223.5.5.5")
+                    add("119.29.29.29")
                 }
+            }
+            Logging.LOG.log(Level.INFO, "Using DNS servers for game: $servers")
+            val configText = servers.joinToString(separator = "\n") { "nameserver $it" }
+            runCatching {
+                // 配置文件不存在或内容不一致时覆写一次
+                if (!resolvFile.exists() || resolvFile.readText().trim() != configText.trim()) {
+                    resolvFile.writeText(configText)
+                }
+            }.onFailure {
+                Logging.LOG.log(Level.WARNING, "Failed to create resolv.conf", it)
+                resolvFile.delete()
             }
         } catch (e: IOException) {
             e.printStackTrace()

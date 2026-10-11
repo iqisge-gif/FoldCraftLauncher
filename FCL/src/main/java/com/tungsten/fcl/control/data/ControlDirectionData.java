@@ -1,9 +1,8 @@
 package com.tungsten.fcl.control.data;
 
+import static com.tungsten.fcl.control.data.JsonElements.get;
 import static com.tungsten.fcl.util.FXUtils.onInvalidating;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.JsonDeserializationContext;
 import com.google.gson.JsonDeserializer;
 import com.google.gson.JsonElement;
@@ -13,7 +12,6 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonSerializationContext;
 import com.google.gson.JsonSerializer;
 import com.google.gson.annotations.JsonAdapter;
-import com.google.gson.reflect.TypeToken;
 import com.tungsten.fclcore.fakefx.beans.InvalidationListener;
 import com.tungsten.fclcore.fakefx.beans.Observable;
 import com.tungsten.fclcore.fakefx.beans.property.ObjectProperty;
@@ -36,7 +34,7 @@ public class ControlDirectionData implements Cloneable, Observable, CustomContro
         return id;
     }
 
-    public boolean equals(ControlButtonData data) {
+    public boolean equals(ControlDirectionData data) {
         return data.getId().equals(id);
     }
 
@@ -145,8 +143,9 @@ public class ControlDirectionData implements Cloneable, Observable, CustomContro
     @Override
     public CustomControl cloneView() {
         ControlDirectionData clone = clone();
-        clone.getBaseInfo().setXPosition(0);
-        clone.getBaseInfo().setYPosition(0);
+        // 副本贴近原控件（偏移 2%），不与原控件完全重叠，也不落回左上角
+        clone.getBaseInfo().setXPosition(Math.min(1000, clone.getBaseInfo().getXPosition() + 20));
+        clone.getBaseInfo().setYPosition(Math.min(1000, clone.getBaseInfo().getYPosition() + 20));
         return clone;
     }
 
@@ -156,12 +155,10 @@ public class ControlDirectionData implements Cloneable, Observable, CustomContro
             if (src == null) return JsonNull.INSTANCE;
             JsonObject obj = new JsonObject();
 
-            Gson gson = new GsonBuilder().setPrettyPrinting().create();
-
             obj.addProperty("id", src.getId());
             obj.addProperty("style", src.getStyle().getName());
-            obj.add("baseInfo", gson.toJsonTree(src.getBaseInfo()).getAsJsonObject());
-            obj.add("event", gson.toJsonTree(src.getEvent()).getAsJsonObject());
+            obj.add("baseInfo", new BaseInfoData.Serializer().serialize(src.getBaseInfo(), null, null));
+            obj.add("event", new DirectionEventData.Serializer().serialize(src.getEvent(), null, null));
 
             return obj;
         }
@@ -172,20 +169,20 @@ public class ControlDirectionData implements Cloneable, Observable, CustomContro
                 return null;
             JsonObject obj = (JsonObject) json;
 
-            ControlDirectionData data = new ControlDirectionData(Optional.ofNullable(obj.get("id")).map(JsonElement::getAsString).orElse(UUID.randomUUID().toString()));
-            Gson gson = new GsonBuilder().setPrettyPrinting().create();
+            ControlDirectionData data = new ControlDirectionData(Optional.ofNullable(get(obj, "id")).map(JsonElement::getAsString).orElse(UUID.randomUUID().toString()));
 
             if (!DirectionStyles.isInitialized()) {
                 DirectionStyles.init();
             }
-            if (obj.get("style").toString().contains("\"name\"")) {
-                data.setStyle(gson.fromJson(Optional.ofNullable(obj.get("style")).map(JsonElement::getAsJsonObject).orElse(gson.toJsonTree(ControlDirectionStyle.DEFAULT_DIRECTION_STYLE).getAsJsonObject()), new TypeToken<ControlDirectionStyle>(){}.getType()));
+            JsonElement style = get(obj, "style");
+            if (style != null && style.toString().contains("\"name\"")) {
+                data.setStyle(new ControlDirectionStyle.Serializer().deserialize(style, null, null));
                 DirectionStyles.addStyle(data.getStyle());
             } else {
-                data.setStyle(DirectionStyles.findStyleByName(obj.get("style").getAsString()));
+                data.setStyle(DirectionStyles.findStyleByName(style != null && style.isJsonPrimitive() ? style.getAsString() : ""));
             }
-            data.setBaseInfo(gson.fromJson(Optional.ofNullable(obj.get("baseInfo")).map(JsonElement::getAsJsonObject).orElse(gson.toJsonTree(new BaseInfoData()).getAsJsonObject()), new TypeToken<BaseInfoData>(){}.getType()));
-            data.setEvent(gson.fromJson(Optional.ofNullable(obj.get("event")).map(JsonElement::getAsJsonObject).orElse(gson.toJsonTree(new DirectionEventData()).getAsJsonObject()), new TypeToken<DirectionEventData>(){}.getType()));
+            data.setBaseInfo(Optional.ofNullable(get(obj, "baseInfo")).map(JsonElement::getAsJsonObject).map(baseInfo -> new BaseInfoData.Serializer().deserialize(baseInfo, null, null)).orElseGet(BaseInfoData::new));
+            data.setEvent(Optional.ofNullable(get(obj, "event")).map(JsonElement::getAsJsonObject).map(event -> new DirectionEventData.Serializer().deserialize(event, null, null)).orElseGet(DirectionEventData::new));
 
             return data;
         }

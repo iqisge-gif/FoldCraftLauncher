@@ -9,9 +9,9 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.SeekBar
-import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.mio.manager.RendererManager.getRenderer
+import com.mio.util.pixelAwareIcon
 import com.tungsten.fcl.R
 import com.tungsten.fcl.databinding.ItemVersionSettingEditBinding
 import com.tungsten.fcl.databinding.ItemVersionSettingIconBinding
@@ -21,6 +21,7 @@ import com.tungsten.fcl.databinding.ItemVersionSettingValueBinding
 import com.tungsten.fcl.game.FCLGameRepository
 import com.tungsten.fcl.setting.Controllers
 import com.tungsten.fcl.setting.VersionSetting
+import com.tungsten.fcl.ui.setting.SettingGroup
 import com.tungsten.fclcore.util.platform.MemoryUtils
 import com.tungsten.fcllibrary.component.theme.ThemeEngine
 import com.tungsten.fcllibrary.component.view.FCLTextView
@@ -30,7 +31,6 @@ enum class VersionSettingTag {
     // 特殊开关行
     SPECIAL,
     VULKAN,
-    FORCE_RESOLUTION,
 
     // 按钮行
     EDIT_ICON,
@@ -44,6 +44,7 @@ enum class VersionSettingTag {
     INSTALL_RENDERER,
     EDIT_DRIVER,
     INSTALL_DRIVER,
+    EDIT_VULKAN_CHECK,
     EDIT_ENV,
 
     // 编辑行
@@ -76,19 +77,15 @@ class VersionSettingAdapter(
     private val TYPE_MEMORY = 3
     private val TYPE_ICON = 4
 
-    /** 设置行分组：同组相邻行连成一块（行间无间距、去中间圆角） */
-    private sealed class SettingGroup {
-        /** 渲染相关设置（图形后端/渲染器/大核/Vulkan 驱动等） */
-        object Render : SettingGroup()
-        object Check : SettingGroup()
-    }
-
     private lateinit var versionSetting: VersionSetting
     private var modpack = false
     private var enableSpecific = false
     private var usedMemory = 0
     private var iconDrawable: Drawable? = null
     private var rows: List<Row> = emptyList()
+
+    /** 检测入口行展示的缓存摘要（Vulkan 版本或"未检测"），由页面按需更新 */
+    var vulkanCheckSummary: String = ""
 
     /** 版本/状态变化时全量重建行列表 */
     fun update(
@@ -142,6 +139,7 @@ class VersionSettingAdapter(
                 VersionSettingTag.EDIT_JAVA,
                 VersionSettingTag.INSTALL_JAVA,
                 descriptionRes = R.string.settings_game_java_version_desc,
+                group = SettingGroup.Common
             )
             result += Row.SwitchRow(
                 R.string.settings_game_working_directory,
@@ -149,6 +147,7 @@ class VersionSettingAdapter(
                 { versionSetting.isIsolateGameDir = it },
                 disabled = modpack,
                 descriptionRes = R.string.settings_game_working_directory_desc,
+                group = SettingGroup.Common
             )
             result += Row.MemoryRow(R.string.settings_memory_desc)
             result += Row.EditRow(
@@ -157,6 +156,7 @@ class VersionSettingAdapter(
                 { versionSetting.serverIp = it },
                 hintRes = R.string.settings_advanced_server_ip_prompt,
                 descriptionRes = R.string.settings_advanced_server_ip_desc,
+                group = SettingGroup.Common
             )
             result += Row.ValueRow(
                 R.string.settings_fcl_controller,
@@ -164,6 +164,7 @@ class VersionSettingAdapter(
                 VersionSettingTag.EDIT_CONTROLLER,
                 VersionSettingTag.INSTALL_CONTROLLER,
                 descriptionRes = R.string.settings_fcl_controller_desc,
+                group = SettingGroup.Common
             )
             result += Row.ValueRow(
                 R.string.settings_fcl_graphics_backend,
@@ -179,13 +180,6 @@ class VersionSettingAdapter(
                 VersionSettingTag.EDIT_RENDERER,
                 VersionSettingTag.INSTALL_RENDERER,
                 descriptionRes = R.string.settings_fcl_renderer_desc,
-                group = SettingGroup.Render,
-            )
-            result += Row.SwitchRow(
-                R.string.settings_fcl_pojav_bigcore,
-                { versionSetting.isPojavBigCore },
-                { versionSetting.isPojavBigCore = it },
-                descriptionRes = R.string.settings_fcl_pojav_bigcore_desc,
                 group = SettingGroup.Render,
             )
             result += Row.SwitchRow(
@@ -206,6 +200,21 @@ class VersionSettingAdapter(
                     group = SettingGroup.Render,
                 )
             }
+            result += Row.ValueRow(
+                R.string.settings_fcl_vulkan_check,
+                { vulkanCheckSummary },
+                VersionSettingTag.EDIT_VULKAN_CHECK,
+                null,
+                descriptionRes = R.string.settings_fcl_vulkan_check_desc,
+                group = SettingGroup.Render,
+            )
+            result += Row.SwitchRow(
+                R.string.settings_fcl_vulkan_check_disable,
+                { versionSetting.isNotCheckVulkan },
+                { versionSetting.isNotCheckVulkan = it },
+                descriptionRes = R.string.settings_fcl_vulkan_check_disable_desc,
+                group = SettingGroup.Render,
+            )
             result += Row.SwitchRow(
                 R.string.settings_advanced_dont_check_game_completeness,
                 { versionSetting.isNotCheckGame },
@@ -232,6 +241,7 @@ class VersionSettingAdapter(
                 { versionSetting.isDebugLog },
                 { versionSetting.isDebugLog = it },
                 descriptionRes = R.string.settings_advanced_debug_log_desc,
+                group = SettingGroup.Check
             )
             result += Row.EditRow(
                 R.string.settings_advanced_minecraft_arguments,
@@ -241,7 +251,7 @@ class VersionSettingAdapter(
                 hintRes = R.string.settings_advanced_minecraft_arguments_prompt,
                 longPressEdit = true,
                 descriptionRes = R.string.settings_advanced_minecraft_arguments_desc,
-                group = SettingGroup.Check
+                group = SettingGroup.Argument
             )
             result += Row.EditRow(
                 R.string.settings_advanced_jvm_args,
@@ -250,7 +260,7 @@ class VersionSettingAdapter(
                 tag = VersionSettingTag.JVM_ARGS,
                 longPressEdit = true,
                 descriptionRes = R.string.settings_advanced_jvm_args_desc,
-                group = SettingGroup.Check
+                group = SettingGroup.Argument
             )
             result += Row.ValueRow(
                 R.string.settings_advanced_env,
@@ -258,15 +268,7 @@ class VersionSettingAdapter(
                 VersionSettingTag.EDIT_ENV,
                 null,
                 descriptionRes = R.string.settings_advanced_env_desc,
-                group = SettingGroup.Check
-            )
-            result += Row.SwitchRow(
-                R.string.settings_advanced_force_resolution,
-                { versionSetting.isForceResolution },
-                { listener.onSpecialSwitch(VersionSettingTag.FORCE_RESOLUTION, it) },
-                longClick = true,
-                rowTag = VersionSettingTag.FORCE_RESOLUTION,
-                descriptionRes = R.string.settings_advanced_force_resolution_desc,
+                group = SettingGroup.Argument
             )
         }
         return result
@@ -448,7 +450,6 @@ class VersionSettingAdapter(
         val binding = ItemVersionSettingMemoryBinding.bind(holder.itemView)
         val totalMemory = MemoryUtils.getTotalDeviceMemory(context)
         val freeMemory = MemoryUtils.getFreeDeviceMemory(context)
-        binding.barMemory.max = totalMemory
         binding.memoryBar.max = totalMemory
 
         // 勾选框/滑条变化时重算进度条与文本（原 fakefx 绑定表达式的等价逻辑）
@@ -484,7 +485,9 @@ class VersionSettingAdapter(
 
         binding.checkAutoAllocate.setOnCheckedChangeListener(null)
         binding.checkAutoAllocate.isChecked = versionSetting.isAutoMemory
+        // 先摘监听再设 max/progress：setMax 对越界进度的钳制会同步回调 onProgressChanged
         binding.barMemory.setOnSeekBarChangeListener(null)
+        binding.barMemory.max = totalMemory
         binding.barMemory.progress = versionSetting.maxMemory
         binding.checkAutoAllocate.setOnCheckedChangeListener { _, checked ->
             versionSetting.isAutoMemory = checked
@@ -506,10 +509,7 @@ class VersionSettingAdapter(
     private fun bindIcon(holder: Holder, row: Row.IconRow) {
         val binding = ItemVersionSettingIconBinding.bind(holder.itemView)
         binding.icon.setImageDrawable(
-            iconDrawable ?: ContextCompat.getDrawable(
-                context,
-                R.drawable.img_grass
-            )
+            iconDrawable ?: pixelAwareIcon(context, R.drawable.img_grass)
         )
         binding.buttonEdit.setOnClickListener { listener.onButtonClick(VersionSettingTag.EDIT_ICON) }
         binding.buttonDelete.setOnClickListener { listener.onButtonClick(VersionSettingTag.DELETE_ICON) }

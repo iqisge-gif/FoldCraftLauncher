@@ -8,7 +8,27 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.serialization") version "2.3.20"
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
+    id("checkstyle")
+}
+
+checkstyle {
+    // 规则集 config/checkstyle/checkstyle.xml 与 Android Studio 默认格式对齐，仅检查 Java 代码
+    toolVersion = "10.12.5"
+    configFile = rootProject.file("config/checkstyle/checkstyle.xml")
+}
+
+// AGP 不提供 Java 插件的 SourceSetContainer，checkstyle 插件不会自动创建任务，
+// 因此手动注册 checkstyle 任务，检查范围为主源码目录的 Java 文件
+tasks.register<Checkstyle>("checkstyle") {
+    description = "Run checkstyle on the FCL Java sources."
+    group = "verification"
+    source(layout.projectDirectory.dir("src/main/java"))
+    include("**/*.java")
+    classpath = files()
+    maxErrors = 0
+    maxWarnings = 0
 }
 
 android {
@@ -44,14 +64,20 @@ android {
             keyAlias = "FCL-Debug"
             keyPassword = "FCL-Debug"
         }
+        // minSdk 26 ≥ 24，v1 已无必要，统一启用 v2 + v3 签名方案
+        configureEach {
+            enableV1Signing = false
+            enableV2Signing = true
+            enableV3Signing = true
+        }
     }
 
     defaultConfig {
         applicationId = "com.tungsten.fcl"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 1328
-        versionName = "1.3.2.8"
+        versionCode = 1339
+        versionName = "1.3.3.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
             cmake {
@@ -90,6 +116,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // core library desugaring：java.time / java.util.stream / Optional 等脱糖到 minSdk 26 可用
+        isCoreLibraryDesugaringEnabled = true
     }
 
     packaging {
@@ -172,7 +200,8 @@ androidComponents {
         }
 
         // LWJGL natives 打包在 lwjgl-*-natives aar 的 assets/app_runtime/lwjgl/<版本>/natives/<abi> 下，
-        // 不走 AGP 的 abiFilters，需在 mergeAssets 后手动按架构删除其他 ABI 的 natives 目录。
+        // JNA natives 在 assets/app_runtime/jna/<版本>/natives/<abi> 下，
+        // 均不走 AGP 的 abiFilters，需在 mergeAssets 后手动按架构删除其他 ABI 的 natives 目录。
         val variantName = variant.name.replaceFirstChar { it.uppercaseChar() }
         afterEvaluate {
             val mergeAssets =
@@ -208,6 +237,18 @@ androidComponents {
                             }
                         }
                     }
+                    // JNA natives 在 assets/app_runtime/jna/<版本>/natives/<abi> 下，同样按架构裁剪
+                    File(assetsDir, "app_runtime/jna").listFiles()?.forEach { versionDir ->
+                        val nativesDir = File(versionDir, "natives")
+                        if (nativesDir.isDirectory) {
+                            nativesDir.listFiles()?.forEach { dir ->
+                                if (dir.isDirectory && dir.name != abi) {
+                                    logger.lifecycle("删除非目标架构 natives: $dir")
+                                    dir.deleteRecursively()
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -220,17 +261,23 @@ kotlin {
     }
 }
 
+// Room schema 导出（收藏库用，为将来迁移留底）
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     implementation(project(":ZipFileSystem"))
     implementation(project(":Terracotta"))
     implementation(libs.commons.io)
     implementation(libs.jelf)
-    implementation(libs.taptargetview)
     implementation(libs.nanohttpd)
     implementation(libs.commons.compress)
     implementation(libs.xz)
     implementation(libs.opennbt)
+    implementation(libs.lz4)
     implementation(libs.gson)
     implementation(libs.tomlj)
     implementation(libs.constant.pool.scanner)
@@ -243,6 +290,11 @@ dependencies {
     implementation(libs.core.splashscreen)
     implementation(libs.material)
     implementation(libs.constraintlayout)
+    implementation(libs.core.ktx)
+    implementation(libs.lifecycle.runtime.ktx)
+    implementation(libs.lifecycle.viewmodel)
+    implementation(libs.recyclerview)
+    implementation(libs.coroutines.android)
     implementation(libs.glide)
     implementation(libs.touchcontroller)
     implementation(libs.palette.ktx)
@@ -250,7 +302,11 @@ dependencies {
     implementation(libs.segmented.button)
     implementation(libs.datastore)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
 
+    testImplementation("junit:junit:4.13.2")
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
 }

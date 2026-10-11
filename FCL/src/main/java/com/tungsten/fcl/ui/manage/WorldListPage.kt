@@ -3,9 +3,9 @@ package com.tungsten.fcl.ui.manage
 import android.content.Context
 import android.view.View
 import android.widget.Toast
-import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.mio.util.getLocalizedText
 import com.mio.util.showErrorDialog
 import com.tungsten.fcl.R
 import com.tungsten.fcl.activity.MainActivity
@@ -22,10 +22,10 @@ import com.tungsten.fclcore.fakefx.collections.FXCollections
 import com.tungsten.fclcore.game.World
 import com.tungsten.fclcore.task.Task
 import com.tungsten.fclcore.util.Logging
+import com.tungsten.fclcore.util.versioning.GameVersionNumber
 import com.tungsten.fcllibrary.component.dialog.EditDialog
 import com.tungsten.fcllibrary.component.dialog.FCLAlertDialog
 import com.tungsten.fcllibrary.component.ui.FCLPage
-import com.tungsten.fcllibrary.component.view.FCLUILayout
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -40,11 +40,8 @@ import java.util.logging.Level
 import java.util.stream.Collectors
 import kotlin.coroutines.resume
 import kotlin.io.path.pathString
-import com.mio.util.copyFileToDir
-import com.mio.util.getLocalizedText
-import com.mio.util.isDocUri
 
-class WorldListPage(context: Context?, id: Int, resId: Int) : FCLPage(context, id, resId), VersionLoadable, View.OnClickListener {
+class WorldListPage(context: Context?, id: Int) : FCLPage(context, id, R.layout.page_manage_world), VersionLoadable, View.OnClickListener {
     private val itemsProperty: ListProperty<WorldListItem> =
         SimpleListProperty(FXCollections.observableArrayList())
 
@@ -65,9 +62,11 @@ class WorldListPage(context: Context?, id: Int, resId: Int) : FCLPage(context, i
         binding = PageManageWorldBinding.bind(contentView)
 
         showAll.addListener { _: Observable? ->
+            val selectedVersion = gameVersion?.let { GameVersionNumber.asGameVersion(it) }
             itemsProperty.setAll(
                 worlds.stream()
-                    .filter { world: World? -> isShowAll() || world!!.gameVersion == null || world.gameVersion == gameVersion }
+                    .filter { world: World? -> isShowAll() || world!!.gameVersion == null
+                            || (selectedVersion != null && world.gameVersion!!.compareTo(selectedVersion) == 0) }
                     .map { it: World? ->
                         WorldListItem(
                             context,
@@ -139,10 +138,13 @@ class WorldListPage(context: Context?, id: Int, resId: Int) : FCLPage(context, i
                 return@launch
             }
             setLoading(false)
+            worlds.clear()
             worlds.addAll(result)
+            val selectedVersion = gameVersion?.let { GameVersionNumber.asGameVersion(it) }
             itemsProperty.setAll(
                 result.stream()
-                    .filter { isShowAll() || it.gameVersion == null || it.gameVersion == gameVersion }
+                    .filter { isShowAll() || it.gameVersion == null
+                            || (selectedVersion != null && it.gameVersion!!.compareTo(selectedVersion) == 0) }
                     .map {
                         WorldListItem(
                             context,
@@ -175,14 +177,8 @@ class WorldListPage(context: Context?, id: Int, resId: Int) : FCLPage(context, i
 
     fun add() {
         MainActivity.getInstance().fileLauncher.launchSingleSelection(null, listOf(".zip")) {
-            var path = it?.get(0) ?: return@launchSingleSelection
-            val uri = path.toUri()
-            if (isDocUri(uri)) {
-                path =
-                    copyFileToDir(activity, uri, File(FCLPath.CACHE_DIR))
-            }
-            val file = File(path)
-            installWorld(file)
+            val selected = it?.get(0) ?: return@launchSingleSelection
+            installWorld(selected.toFile(activity, File(FCLPath.CACHE_DIR)))
         }
     }
 
@@ -208,7 +204,7 @@ class WorldListPage(context: Context?, id: Int, resId: Int) : FCLPage(context, i
                 builder1.setAlertLevel(FCLAlertDialog.AlertLevel.ALERT)
                 builder1.setMessage(context.getString(R.string.world_import_invalid))
                 builder1.setNegativeButton(
-                    context.getString(com.tungsten.fcl.R.string.dialog_positive),
+                    context.getString(R.string.dialog_positive),
                     null
                 )
                 builder1.create().show()

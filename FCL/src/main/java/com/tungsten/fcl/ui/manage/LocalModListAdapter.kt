@@ -8,7 +8,6 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.bumptech.glide.Glide
 import com.mio.ui.adapter.ViewHolder
@@ -58,10 +57,6 @@ class LocalModListAdapter(
     private val jobs = HashMap<String, Job>()
     private var recyclerView: RecyclerView? = null
 
-    fun setRecyclerView(recyclerView: RecyclerView) {
-        this.recyclerView = recyclerView
-    }
-
     fun listProperty(): ListProperty<ModInfoObject> {
         return listProperty
     }
@@ -90,7 +85,7 @@ class LocalModListAdapter(
 
     init {
         this.listProperty.addListener(ListChangeListener { c -> // 增量插入只通知新条目（notifyItemRangeInserted），已显示条目不会重绘，
-            // 避免其跑马灯文字在每次增量刷新时被重置
+            // 避免其在每次增量刷新时被重绘（图标重新加载、状态闪烁）
             var replaced = false
             while (c.next()) {
                 if (c.wasReplaced()) {
@@ -116,11 +111,45 @@ class LocalModListAdapter(
                 fromSelf = false
                 notifyDataSetChanged()
             }
+            scheduleVisibleQueryRefresh()
         })
         selectedItemsProperty.addListener { _: Observable? ->
             if (!fromSelf) {
                 notifyDataSetChanged()
             }
+        }
+    }
+
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+        this.recyclerView = recyclerView
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        super.onDetachedFromRecyclerView(recyclerView)
+        this.recyclerView = null
+    }
+
+    /**
+     * 列表变化后统一补发可见条目的远程查询：连续搜索时每轮刷新都会取消在途查询，
+     * 而条目 view 可能被原位复用（既不重绑定也不触发 attach），查询会随刷新一起丢失；
+     * post 到布局完成后主动扫描可见条目，保证最后一轮刷新结束后查询必然发起。
+     */
+    private fun scheduleVisibleQueryRefresh() {
+        recyclerView?.post { refreshVisibleQueries() }
+    }
+
+    private fun refreshVisibleQueries() {
+        val recyclerView = recyclerView ?: return
+        val layoutManager = recyclerView.layoutManager ?: return
+        for (i in 0 until layoutManager.childCount) {
+            val child = layoutManager.getChildAt(i) ?: continue
+            val holder = recyclerView.getChildViewHolder(child) as ViewHolder
+            val position = holder.bindingAdapterPosition
+            if (position == RecyclerView.NO_POSITION || position >= listProperty.size) continue
+            val modInfoObject = listProperty[position]
+            if (modInfoObject.remoteMod != null) continue
+            startRemoteModQuery(holder, ItemLocalModBinding.bind(child), modInfoObject)
         }
     }
 
@@ -166,13 +195,19 @@ class LocalModListAdapter(
         val binding = ItemLocalModBinding.bind(holder.itemView)
         val modInfoObject = listProperty[position]
         val key = modInfoObject.modInfo.fileName
+        // 复用的 view 可能还在跑上一个条目的在途查询，若不取消，
+        // 查询完成时会把上一个条目的远程信息错误写进正在显示本条目的 view
+        val oldKey = holder.itemView.tag as? String
+        if (oldKey != null && oldKey != key) {
+            jobs.remove(oldKey)?.cancel()
+        }
         jobs[key]?.cancel()
         jobs.remove(key)
         binding.parent.backgroundTintList = ColorStateList(
             arrayOf<IntArray?>(intArrayOf()),
             intArrayOf(
                 if (selectedItemsProperty.contains(modInfoObject)) ThemeEngine.getInstance()
-                    .getTheme().color else ThemeEngine.getInstance().getTheme()
+                    .getTheme().getColor() else ThemeEngine.getInstance().getTheme()
                     .ltColor
             )
         )
@@ -204,7 +239,7 @@ class LocalModListAdapter(
                 binding.parent.backgroundTintList = ColorStateList(
                     arrayOf<IntArray?>(
                         intArrayOf()
-                    ), intArrayOf(ThemeEngine.getInstance().getTheme().color)
+                    ), intArrayOf(ThemeEngine.getInstance().getTheme().getColor())
                 )
             }
         }
@@ -215,15 +250,11 @@ class LocalModListAdapter(
             modInfoObject.active.set(checked)
             onChecked.invoke()
         }
-        binding.icon.tag = position
         binding.name.text = modInfoObject.title
-        binding.name.isSelected = true
         val tag = getTag(modInfoObject)
         binding.tag.text = tag
-        binding.tag.isSelected = true
         binding.tag.visibility = if (tag == "") View.GONE else View.VISIBLE
         binding.description.text = modInfoObject.subtitle
-        binding.description.isSelected = true
         binding.restore.visibility = if (modInfoObject.modInfo.mod.oldFiles
                 .isEmpty()
         ) View.GONE else View.VISIBLE
@@ -249,63 +280,89 @@ class LocalModListAdapter(
             uiManager.downloadUI.downloadPage.jumpToModPage(modInfoObject.remoteMod)
         }
 
-        drawable.setTint(ThemeEngine.getInstance().getTheme().color)
+        drawable.setTint(ThemeEngine.getInstance().getTheme().getColor())
         binding.icon.setImageDrawable(drawable)
         val cachedRemoteMod = modInfoObject.remoteMod
         if (cachedRemoteMod != null) {
             applyRemoteMod(binding, cachedRemoteMod, modInfoObject)
         } else {
-            val job = MainActivity.getInstance().lifecycleScope.launch {
-                delay(200L.milliseconds)
-                if (!isVisible(modInfoObject)) return@launch
-                val mod = withContext(Dispatchers.IO) {
-                    if (modInfoObject.modInfo.file.toFile()
-                            .length() > 104857600
-                    ) return@withContext null
-                    for (type in RemoteMod.Type.entries.toTypedArray()) {
-                        ensureActive()
-                        try {
-                            if (modInfoObject.remoteMod == null) {
-                                val remoteVersion: Optional<RemoteMod.Version?> =
-                                    type.remoteModRepository.getRemoteVersionByLocalFile(
-                                        modInfoObject.modInfo,
-                                        modInfoObject.modInfo.file
-                                    )
-                                if (remoteVersion.isPresent) {
-                                    val remoteMod: RemoteMod? = type.remoteModRepository
-                                        .getModById(remoteVersion.get().modid)
-                                    modInfoObject.modInfo.remoteVersion =
-                                        remoteVersion.get()
-                                    modInfoObject.remoteMod = remoteMod
-                                } else {
-                                    continue
-                                }
-                            }
-                            return@withContext modInfoObject.remoteMod
-                        } catch (e: Throwable) {
-                            System.gc()
-                            Logging.LOG.log(Level.SEVERE, e.toString())
-                        }
-                    }
-                    null
-                }
-                if (isActive && binding.icon.tag as Int == position) {
-                    mod?.let {
-                        applyRemoteMod(binding, it, modInfoObject)
-                    }
-                }
-            }
-            jobs[key] = job
+            startRemoteModQuery(holder, binding, modInfoObject)
         }
     }
 
-    private fun isVisible(modInfoObject: ModInfoObject): Boolean {
-        val layoutManager = recyclerView?.layoutManager as? LinearLayoutManager ?: return true
-        val first = layoutManager.findFirstVisibleItemPosition()
-        val last = layoutManager.findLastVisibleItemPosition()
-        if (first == RecyclerView.NO_POSITION || last == RecyclerView.NO_POSITION) return true
-        val position = listProperty.indexOf(modInfoObject)
-        return position in first..last
+    override fun onViewAttachedToWindow(holder: ViewHolder) {
+        super.onViewAttachedToWindow(holder)
+        val position = holder.bindingAdapterPosition
+        if (position == RecyclerView.NO_POSITION || position >= listProperty.size) return
+        val modInfoObject = listProperty[position]
+        if (modInfoObject.remoteMod != null) return
+        startRemoteModQuery(holder, ItemLocalModBinding.bind(holder.itemView), modInfoObject)
+    }
+
+    /**
+     * 远程信息查询挂在 attach 与 bind 两个生命周期上：
+     * RecyclerView 的 view cache（视口外侧各约 2 个条目）复用缓存 view 重新显示时不会重新绑定，
+     * 查询必须由 attach 发起；而 notifyDataSetChanged 整体刷新（搜索 / 勾选筛选 / 排序）后，
+     * 屏幕上的条目从 attachedScrap 原位复用，既不触发 attach 也不触发 detach，
+     * 此时查询只能由重新绑定发起。
+     * detach 时取消在途查询，delay(200ms) 后仍存活即说明条目停在了屏幕上。
+     */
+    private fun startRemoteModQuery(
+        holder: ViewHolder,
+        binding: ItemLocalModBinding,
+        modInfoObject: ModInfoObject
+    ) {
+        val key = modInfoObject.modInfo.fileName
+        val existing = jobs[key]
+        if (existing != null && existing.isActive) return
+        holder.itemView.tag = key
+        val job = MainActivity.getInstance().lifecycleScope.launch {
+            delay(200L.milliseconds)
+            val mod = withContext(Dispatchers.IO) {
+                for (type in RemoteMod.Type.entries.toTypedArray()) {
+                    ensureActive()
+                    try {
+                        if (modInfoObject.remoteMod == null) {
+                            val remoteVersion: Optional<RemoteMod.Version?> =
+                                type.remoteModRepository.getRemoteVersionByLocalFile(
+                                    modInfoObject.modInfo,
+                                    modInfoObject.modInfo.file
+                                )
+                            if (remoteVersion.isPresent) {
+                                val remoteMod: RemoteMod? = type.remoteModRepository
+                                    .getModById(remoteVersion.get().modid())
+                                modInfoObject.modInfo.remoteVersion =
+                                    remoteVersion.get()
+                                modInfoObject.remoteMod = remoteMod
+                            } else {
+                                continue
+                            }
+                        }
+                        return@withContext modInfoObject.remoteMod
+                    } catch (e: Throwable) {
+                        Logging.LOG.log(
+                            Level.SEVERE,
+                            "getRemoteVersionByLocalFile error: ${modInfoObject.modInfo.file.fileName}\n${e.toString()}"
+                        )
+                    }
+                }
+                null
+            }
+            if (isActive) {
+                mod?.let {
+                    applyRemoteMod(binding, it, modInfoObject)
+                }
+            }
+        }
+        jobs[key] = job
+    }
+
+    override fun onViewDetachedFromWindow(holder: ViewHolder) {
+        super.onViewDetachedFromWindow(holder)
+        val key = holder.itemView.tag as? String ?: return
+        holder.itemView.tag = null
+        jobs[key]?.cancel()
+        jobs.remove(key)
     }
 
     @SuppressLint("SetTextI18n")
@@ -320,7 +377,7 @@ class LocalModListAdapter(
         binding.name.text = mod.title
         binding.jump.visibility = View.VISIBLE
         if (modInfoObject.mod != null && LocaleUtils.isChinese(context)) {
-            val name = modInfoObject.mod.name
+            val name = modInfoObject.mod.name()
             if (name.isNotEmpty() && StringUtils.containsChinese(name)) {
                 binding.name.text = "[${name}]${mod.title}"
             }

@@ -6,7 +6,6 @@ import static com.tungsten.fcllibrary.util.LocaleUtils.formatDateTime;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.view.View;
-import android.widget.ArrayAdapter;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -23,10 +22,7 @@ import com.github.steveice10.opennbt.tag.builtin.StringTag;
 import com.github.steveice10.opennbt.tag.builtin.Tag;
 import com.tungsten.fcl.R;
 import com.mio.util.AndroidUtilKt;
-import com.tungsten.fcl.util.FXUtils;
 import com.tungsten.fcl.FCLApp;
-import com.tungsten.fclcore.fakefx.beans.property.ObjectProperty;
-import com.tungsten.fclcore.fakefx.beans.property.SimpleObjectProperty;
 import com.tungsten.fclcore.fakefx.collections.FXCollections;
 import com.tungsten.fclcore.fakefx.collections.ObservableList;
 import com.tungsten.fclcore.game.World;
@@ -47,14 +43,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.logging.Level;
-import java.util.stream.Collectors;
 
 public class WorldInfoPage extends FCLPage {
 
     private final World world;
-    private final CompoundTag levelDat;
+    private final CompoundTag levelData;
     private final CompoundTag dataTag;
     private final CompoundTag worldGenSettings;
+    private final CompoundTag playerData;
 
     private FCLTextView name;
     private FCLTextView gameVersion;
@@ -74,18 +70,19 @@ public class WorldInfoPage extends FCLPage {
     private FCLEditText foodLevel;
     private FCLEditText xpLevel;
 
-    public WorldInfoPage(Context context, int id, int resId, World world) throws IOException {
-        super(context, id, resId);
+    public WorldInfoPage(Context context, int id, World world) throws IOException {
+        super(context, id, R.layout.page_manage_world_info);
         this.world = world;
-        this.levelDat = world.readLevelDat();
-        this.dataTag = levelDat.get("Data");
-        this.worldGenSettings = dataTag.get("WorldGenSettings");
+        this.levelData = world.getLevelData();
+        this.dataTag = (CompoundTag) levelData.get("Data");
+        this.worldGenSettings = world.getNormalizedWorldGenSettingsData();
+        this.playerData = world.getPlayerData();
 
         name.setText(world.getWorldName());
-        gameVersion.setText(world.getGameVersion());
-        Tag seedTag = worldGenSettings != null ? worldGenSettings.get("seed") : dataTag.get("RandomSeed");
-        if (seedTag instanceof LongTag) {
-            seed.setText(seedTag.getValue().toString());
+        gameVersion.setText(world.getGameVersion() == null ? "" : world.getGameVersion().toNormalizedString());
+        Long seedValue = world.getSeed();
+        if (seedValue != null) {
+            seed.setText(seedValue.toString());
         }
         lastPlayed.setText(formatDateTime(getContext(), Instant.ofEpochMilli(world.getLastPlayed())));
         Tag timeTag = dataTag.get("Time");
@@ -101,7 +98,7 @@ public class WorldInfoPage extends FCLPage {
                 allowCheat.setChecked(value == 1);
                 allowCheat.setOnCheckedChangeListener((buttonView, isChecked) -> {
                     byteTag.setValue(isChecked ? (byte) 1 : (byte) 0);
-                    saveLevelDat();
+                    saveWorldData();
                 });
             } else {
                 allowCheat.setEnabled(false);
@@ -109,15 +106,24 @@ public class WorldInfoPage extends FCLPage {
         } else {
             allowCheat.setEnabled(false);
         }
-        Tag genTag = worldGenSettings != null ? worldGenSettings.get("generate_features") : dataTag.get("MapFeatures");
-        if (genTag instanceof ByteTag) {
-            ByteTag byteTag = (ByteTag) genTag;
+        Tag generateFeaturesTag = null;
+        if (dataTag.get("MapFeatures") instanceof ByteTag mapFeaturesTag) { // Valid before (1.16)20w20a
+            generateFeaturesTag = mapFeaturesTag;
+        } else if (worldGenSettings != null) { // Valid after (1.16)20w20a
+            // "generate_features" is valid between (1.16)20w20a and 26.1-snapshot-6,
+            // "generate_structures" is valid after 26.1-snapshot-6
+            generateFeaturesTag = worldGenSettings.get("generate_features");
+            if (generateFeaturesTag == null)
+                generateFeaturesTag = worldGenSettings.get("generate_structures");
+        }
+        if (generateFeaturesTag instanceof ByteTag) {
+            ByteTag byteTag = (ByteTag) generateFeaturesTag;
             byte value = byteTag.getValue();
             if (value == 0 || value == 1) {
                 generateStructure.setChecked(value == 1);
                 generateStructure.setOnCheckedChangeListener((buttonView, isChecked) -> {
                     byteTag.setValue(isChecked ? (byte) 1 : (byte) 0);
-                    saveLevelDat();
+                    saveWorldData();
                 });
             } else {
                 generateStructure.setEnabled(false);
@@ -125,34 +131,36 @@ public class WorldInfoPage extends FCLPage {
         } else {
             generateStructure.setEnabled(false);
         }
-        difficulty.setDataList(new ArrayList<>(Difficulty.items));
-        ArrayAdapter<String> difficultyAdapter = new ArrayAdapter<>(getContext(), R.layout.item_spinner_auto_tint, Difficulty.items.stream().map(Difficulty::toString).collect(Collectors.toList()));
-        difficultyAdapter.setDropDownViewResource(R.layout.item_spinner_dropdown);
-        difficulty.setAdapter(difficultyAdapter);
-        Tag difficultyTag = dataTag.get("Difficulty");
-        if (difficultyTag instanceof ByteTag) {
-            ByteTag byteTag = (ByteTag) difficultyTag;
-            Difficulty difficulty = Difficulty.of(byteTag.getValue());
-            if (difficulty != null) {
-                this.difficulty.setSelection(difficulty.getPosition());
-                ObjectProperty<Difficulty> difficultyProperty = new SimpleObjectProperty<>(difficulty);
-                FXUtils.bindSelection(this.difficulty, difficultyProperty);
-                difficultyProperty.addListener(observable -> {
-                    if (difficultyProperty.get() != null) {
-                        byteTag.setValue((byte) difficultyProperty.get().ordinal());
-                        saveLevelDat();
-                    }
-                });
-            } else {
-                this.difficulty.setEnabled(false);
-            }
+        difficulty.setItems(new ArrayList<>(Difficulty.items));
+        Difficulty difficultyValue = null;
+        Tag difficultyTag = null;
+        // Valid before 26.1-snapshot-6
+        if (dataTag.get("Difficulty") instanceof ByteTag byteTag
+                && (difficultyValue = Difficulty.of(byteTag.getValue())) != null) {
+            difficultyTag = byteTag;
+        } else if (dataTag.get("difficulty_settings") instanceof CompoundTag difficultySettingTag
+                && difficultySettingTag.get("difficulty") instanceof StringTag stringTag
+                && (difficultyValue = Difficulty.of(stringTag.getValue())) != null) {
+            // Valid after 26.1-snapshot-6
+            difficultyTag = stringTag;
+        }
+        if (difficultyTag != null) {
+            this.difficulty.setSelection(difficultyValue.getPosition());
+            final Tag selectedDifficultyTag = difficultyTag;
+            this.difficulty.setOnItemSelectedListener((index, item) -> {
+                if (selectedDifficultyTag instanceof ByteTag byteTag) {
+                    byteTag.setValue((byte) item.ordinal());
+                } else if (selectedDifficultyTag instanceof StringTag stringTag) {
+                    stringTag.setValue(item.getTagStringValue());
+                }
+                saveWorldData();
+            });
         } else {
             this.difficulty.setEnabled(false);
         }
 
-        Tag playerTag = dataTag.get("Player");
-        if (playerTag instanceof CompoundTag) {
-            CompoundTag player = (CompoundTag) playerTag;
+        if (playerData != null) {
+            CompoundTag player = playerData;
             playerInfo.setVisibility(View.VISIBLE);
 
             Dimension dim = Dimension.of(player.get("Dimension"));
@@ -170,31 +178,49 @@ public class WorldInfoPage extends FCLPage {
                         lastDeath.setText(posString);
                 }
             }
-            Dimension spawnDim = Dimension.of(player.get("SpawnDimension"));
-            if (spawnDim != null) {
-                Tag x = player.get("SpawnX");
-                Tag y = player.get("SpawnY");
-                Tag z = player.get("SpawnZ");
-                if (x instanceof IntTag && y instanceof IntTag && z instanceof IntTag)
-                    spawn.setText(spawnDim.formatPosition(((IntTag) x).getValue(), ((IntTag) y).getValue(), ((IntTag) z).getValue()));
+            // Valid after 25w07a
+            String spawnString = null;
+            if (player.get("respawn") instanceof CompoundTag respawnTag
+                    && respawnTag.get("pos") instanceof IntArrayTag respawnPosTag
+                    && respawnPosTag.length() >= 3) {
+                Dimension respawnDim = respawnTag.get("dimension") instanceof StringTag dimensionTag
+                        ? Dimension.of(dimensionTag)
+                        : Dimension.OVERWORLD;
+                spawnString = respawnDim.formatPosition(respawnPosTag.getValue(0), respawnPosTag.getValue(1), respawnPosTag.getValue(2));
+            } else if (player.get("SpawnX") instanceof IntTag && player.get("SpawnY") instanceof IntTag && player.get("SpawnZ") instanceof IntTag) {
+                // Valid before 25w07a
+                Dimension spawnDim = player.get("SpawnDimension") instanceof StringTag dimensionTag
+                        ? Dimension.of(dimensionTag)
+                        // SpawnDimension tag is valid after 20w12a, the game respawned in the Overworld before that
+                        : Dimension.OVERWORLD;
+                IntTag x = (IntTag) player.get("SpawnX");
+                IntTag y = (IntTag) player.get("SpawnY");
+                IntTag z = (IntTag) player.get("SpawnZ");
+                spawnString = spawnDim.formatPosition(x.getValue(), y.getValue(), z.getValue());
             }
-            gameType.setDataList(new ArrayList<>(GameType.items));
-            ArrayAdapter<String> gameTypeAdapter = new ArrayAdapter<>(getContext(), R.layout.item_spinner_auto_tint, GameType.items.stream().map(GameType::toString).collect(Collectors.toList()));
-            gameTypeAdapter.setDropDownViewResource(R.layout.item_spinner_dropdown);
-            gameType.setAdapter(gameTypeAdapter);
-            Tag gameTypeTag = player.get("playerGameType");
-            if (gameTypeTag instanceof IntTag) {
-                IntTag intTag = (IntTag) gameTypeTag;
-                GameType gameType = GameType.of(intTag.getValue());
+            if (spawnString != null)
+                spawn.setText(spawnString);
+            gameType.setItems(new ArrayList<>(GameType.items));
+            // Valid before 26.1-snapshot-6
+            Tag hardcoreTag = dataTag.get("hardcore");
+            // Valid after 26.1-snapshot-6
+            if (hardcoreTag == null && dataTag.get("difficulty_settings") instanceof CompoundTag difficultySettingsTag) {
+                hardcoreTag = difficultySettingsTag.get("hardcore");
+            }
+            if (player.get("playerGameType") instanceof IntTag intTag && hardcoreTag instanceof ByteTag) {
+                ByteTag hardcoreByteTag = (ByteTag) hardcoreTag;
+                GameType gameType = GameType.of(intTag.getValue(), hardcoreByteTag.getValue() == 1);
                 if (gameType != null) {
                     this.gameType.setSelection(gameType.getPosition());
-                    ObjectProperty<GameType> gameTypeProperty = new SimpleObjectProperty<>(gameType);
-                    FXUtils.bindSelection(this.gameType, gameTypeProperty);
-                    gameTypeProperty.addListener(observable -> {
-                        if (gameTypeProperty.get() != null) {
-                            intTag.setValue(gameTypeProperty.get().ordinal());
-                            saveLevelDat();
+                    this.gameType.setOnItemSelectedListener((index, item) -> {
+                        if (item == GameType.HARDCORE) {
+                            intTag.setValue(0); // survival (hardcore worlds are survival + hardcore flag)
+                            hardcoreByteTag.setValue((byte) 1);
+                        } else {
+                            intTag.setValue(item.ordinal());
+                            hardcoreByteTag.setValue((byte) 0);
                         }
+                        saveWorldData();
                     });
                 } else {
                     this.gameType.setEnabled(false);
@@ -205,15 +231,15 @@ public class WorldInfoPage extends FCLPage {
             Tag healthTag = player.get("Health");
             if (healthTag instanceof FloatTag) {
                 FloatTag floatTag = (FloatTag) healthTag;
-                health.setText(new DecimalFormat("#").format(floatTag.getValue().floatValue()));
-                health.setStringValue(new DecimalFormat("#").format(floatTag.getValue().floatValue()));
+                health.setText(new DecimalFormat("#").format(floatTag.getValue()));
+                health.setStringValue(new DecimalFormat("#").format(floatTag.getValue()));
                 health.stringProperty().addListener(observable -> {
                     if (StringUtils.isBlank(health.getStringValue()) && Lang.toDoubleOrNull(health.getStringValue()) == null) {
                         Toast.makeText(getContext(), getContext().getString(R.string.input_number), Toast.LENGTH_SHORT).show();
                     } else {
                         try {
                             floatTag.setValue(Float.parseFloat(health.getStringValue()));
-                            saveLevelDat();
+                            saveWorldData();
                         } catch (Throwable ignored) {
                         }
                     }
@@ -232,7 +258,7 @@ public class WorldInfoPage extends FCLPage {
                     } else {
                         try {
                             intTag.setValue(Integer.parseInt(foodLevel.getStringValue()));
-                            saveLevelDat();
+                            saveWorldData();
                         } catch (Throwable ignored) {
                         }
                     }
@@ -251,7 +277,7 @@ public class WorldInfoPage extends FCLPage {
                     } else {
                         try {
                             intTag.setValue(Integer.parseInt(xpLevel.getStringValue()));
-                            saveLevelDat();
+                            saveWorldData();
                         } catch (Throwable ignored) {
                         }
                     }
@@ -291,12 +317,12 @@ public class WorldInfoPage extends FCLPage {
         return null;
     }
 
-    private void saveLevelDat() {
-        LOG.info("Saving level.dat of world " + world.getWorldName());
+    private void saveWorldData() {
+        LOG.info("Saving data of world " + world.getWorldName());
         try {
-            this.world.writeLevelDat(levelDat);
+            this.world.writeWorldData();
         } catch (IOException e) {
-            LOG.log(Level.WARNING, "Failed to save level.dat of world " + world.getWorldName(), e);
+            LOG.log(Level.WARNING, "Failed to save world data of " + world.getWorldName(), e);
         }
     }
 
@@ -312,9 +338,9 @@ public class WorldInfoPage extends FCLPage {
                 switch (((IntTag) tag).getValue()) {
                     case 0:
                         return OVERWORLD;
-                    case 1:
+                    case -1:
                         return THE_NETHER;
-                    case 2:
+                    case 1:
                         return THE_END;
                     default:
                         return null;
@@ -357,8 +383,8 @@ public class WorldInfoPage extends FCLPage {
                 if (x instanceof DoubleTag && y instanceof DoubleTag && z instanceof DoubleTag) {
                     //noinspection MalformedFormatString
                     return this == OVERWORLD
-                            ? String.format("(%.2f, %.2f, %.2f)", x.getValue(), y.getValue(), z.getValue())
-                            : String.format("%s (%.2f, %.2f, %.2f)", name, x.getValue(), y.getValue(), z.getValue());
+                            ? String.format("(%.2f, %.2f, %.2f)", ((DoubleTag) x).getValue(), ((DoubleTag) y).getValue(), ((DoubleTag) z).getValue())
+                            : String.format("%s (%.2f, %.2f, %.2f)", name, ((DoubleTag) x).getValue(), ((DoubleTag) y).getValue(), ((DoubleTag) z).getValue());
                 }
 
                 return null;
@@ -400,7 +426,18 @@ public class WorldInfoPage extends FCLPage {
         static final ObservableList<Difficulty> items = FXCollections.observableList(Arrays.asList(values()));
 
         static Difficulty of(int d) {
-            return d >= 0 && d <= items.size() ? items.get(d) : null;
+            return d >= 0 && d < items.size() ? items.get(d) : null;
+        }
+
+        static Difficulty of(String name) {
+            for (Difficulty d : items)
+                if (d.name().toLowerCase(Locale.ROOT).equals(name))
+                    return d;
+            return null;
+        }
+
+        String getTagStringValue() {
+            return name().toLowerCase(Locale.ROOT);
         }
 
         public int getPosition() {
@@ -424,12 +461,14 @@ public class WorldInfoPage extends FCLPage {
     }
 
     private enum GameType {
-        SURVIVAL, CREATIVE, ADVENTURE, SPECTATOR;
+        SURVIVAL, CREATIVE, ADVENTURE, SPECTATOR, HARDCORE;
 
         static final ObservableList<GameType> items = FXCollections.observableList(Arrays.asList(values()));
 
-        static GameType of(int d) {
-            return d >= 0 && d <= items.size() ? items.get(d) : null;
+        static GameType of(int d, boolean hardcore) {
+            if (hardcore && d == 0)
+                return HARDCORE; // hardcore + survival
+            return d >= 0 && d < 4 ? items.get(d) : null;
         }
 
         public int getPosition() {
@@ -440,8 +479,10 @@ public class WorldInfoPage extends FCLPage {
                     return 1;
                 case ADVENTURE:
                     return 2;
-                default:
+                case SPECTATOR:
                     return 3;
+                default:
+                    return 4;
             }
         }
 

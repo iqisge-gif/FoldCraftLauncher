@@ -5,7 +5,6 @@ import com.tungsten.fcl.ui.UIManager;
 
 import android.content.Context;
 import android.view.View;
-import android.widget.ArrayAdapter;
 import android.widget.Toast;
 
 import com.tungsten.fcl.R;
@@ -13,7 +12,6 @@ import com.tungsten.fcl.activity.MainActivity;
 import com.tungsten.fcl.setting.Accounts;
 import com.tungsten.fcl.setting.Profile;
 import com.tungsten.fcl.setting.VersionSetting;
-import com.tungsten.fcl.util.FXUtils;
 import com.tungsten.fclcore.auth.Account;
 import com.tungsten.fclcore.auth.authlibinjector.AuthlibInjectorServer;
 import com.tungsten.fclcore.fakefx.beans.property.SimpleBooleanProperty;
@@ -66,6 +64,7 @@ public class ModpackInfoPage extends FCLPage implements View.OnClickListener {
     private final SimpleStringProperty description = new SimpleStringProperty("");
     private final SimpleStringProperty url = new SimpleStringProperty("");
     private final SimpleBooleanProperty forceUpdate = new SimpleBooleanProperty();
+    private final SimpleBooleanProperty packCurseForge = new SimpleBooleanProperty(true);
     private final SimpleStringProperty fileApi = new SimpleStringProperty("");
     private final SimpleIntegerProperty minMemory = new SimpleIntegerProperty(0);
     private final SimpleStringProperty authlibInjectorServer = new SimpleStringProperty();
@@ -76,15 +75,16 @@ public class ModpackInfoPage extends FCLPage implements View.OnClickListener {
     private FCLImageButton pathButton;
     private FCLButton next;
 
-    public ModpackInfoPage(Context context, int id, int resId, Profile profile, String version, String type, ModpackExportInfo.Options options) {
-        super(context, id, resId);
+    public ModpackInfoPage(Context context, int id, Profile profile, String version, String type, ModpackExportInfo.Options options) {
+        super(context, id, R.layout.page_modpack_info);
         this.profile = profile;
         this.versionName = version;
         this.type = type;
         this.options = options;
 
         name.set(version);
-        author.set(Optional.ofNullable(Accounts.getSelectedAccount()).map(Account::getUsername).orElse(""));
+        fileName.set(version);
+        author.set(Optional.ofNullable(Accounts.getSelectedAccount()).map(Account::getCharacter).orElse(""));
 
         VersionSetting versionSetting = profile.getRepository().getVersionSetting(versionName);
         minMemory.set(Optional.ofNullable(versionSetting.getMinMemory()).orElse(0));
@@ -100,6 +100,7 @@ public class ModpackInfoPage extends FCLPage implements View.OnClickListener {
         FCLLinearLayout memoryLayout = findViewById(R.id.memory_layout);
         FCLLinearLayout serverLayout = findViewById(R.id.server_layout);
         FCLLinearLayout forceUpdateLayout = findViewById(R.id.force_update_layout);
+        FCLLinearLayout packCurseForgeLayout = findViewById(R.id.pack_curseforge_layout);
         View splitF = findViewById(R.id.split_1);
         View splitS = findViewById(R.id.split_2);
         View splitT = findViewById(R.id.split_3);
@@ -117,7 +118,10 @@ public class ModpackInfoPage extends FCLPage implements View.OnClickListener {
         FCLEditText descText = findViewById(R.id.desc);
         FCLSpinner<String> serverSpinner = findViewById(R.id.server);
         FCLSwitch forceUpdateSwitch = findViewById(R.id.force_update);
+        FCLSwitch packCurseForgeSwitch = findViewById(R.id.pack_curseforge);
         FCLTextView pathText = findViewById(R.id.path_text);
+        FCLTextView extensionText = findViewById(R.id.file_extension);
+        extensionText.setText(ModpackTypeSelectionPage.getModpackFileExtension(type));
         pathButton = findViewById(R.id.path);
         FCLEditText fileNameText = findViewById(R.id.file_name);
         next = findViewById(R.id.next);
@@ -170,13 +174,8 @@ public class ModpackInfoPage extends FCLPage implements View.OnClickListener {
             list.add(0, "");
             map.put("", null);
             config().getAuthlibInjectorServers().forEach(it -> map.put(it.getName(), it.getUrl()));
-            serverSpinner.setDataList(list);
-            ArrayAdapter<String> adapter = new ArrayAdapter<>(getContext(), R.layout.item_spinner_auto_tint, list);
-            adapter.setDropDownViewResource(R.layout.item_spinner_dropdown);
-            serverSpinner.setAdapter(adapter);
-            SimpleStringProperty serverName = new SimpleStringProperty("");
-            FXUtils.bindSelection(serverSpinner, serverName);
-            serverName.addListener(observable -> authlibInjectorServer.set(map.get(serverName.get())));
+            serverSpinner.setItems(list);
+            serverSpinner.setOnItemSelectedListener((index, item) -> authlibInjectorServer.set(map.get(item)));
         }
         serverLayout.setVisibility(options.isRequireAuthlibInjectorServer() ? View.VISIBLE : View.GONE);
         splitS.setVisibility(options.isRequireAuthlibInjectorServer() ? View.VISIBLE : View.GONE);
@@ -186,8 +185,14 @@ public class ModpackInfoPage extends FCLPage implements View.OnClickListener {
         }
         forceUpdateLayout.setVisibility(options.isRequireForceUpdate() ? View.VISIBLE : View.GONE);
         splitT.setVisibility(options.isRequireForceUpdate() ? View.VISIBLE : View.GONE);
+        if (options.isRequirePackCurseForge()) {
+            packCurseForgeSwitch.addCheckedChangeListener();
+            packCurseForgeSwitch.checkProperty().bindBidirectional(packCurseForge);
+        }
+        packCurseForgeLayout.setVisibility(options.isRequirePackCurseForge() ? View.VISIBLE : View.GONE);
         pathText.stringProperty().bind(path);
         pathButton.setOnClickListener(this);
+        fileNameText.setText(fileName.get());
         fileNameText.stringProperty().bindBidirectional(fileName);
         next.setOnClickListener(this);
     }
@@ -200,7 +205,7 @@ public class ModpackInfoPage extends FCLPage implements View.OnClickListener {
     private void selectPath() {
         MainActivity.getInstance().fileLauncher.launchSingleSelection(null, null, true, files -> {
             if (files == null) return;
-            path.set(files.get(0));
+            path.set(files.get(0).getPath());
         });
     }
 
@@ -230,7 +235,7 @@ public class ModpackInfoPage extends FCLPage implements View.OnClickListener {
             } else if (StringUtils.isBlank(path.get())) {
                 selectPath();
             } else {
-                File file = new File(path.get(), fileName.get() + ".zip");
+                File file = new File(path.get(), fileName.get() + ModpackTypeSelectionPage.getModpackFileExtension(type));
 
                 if (file.exists()) {
                     Toast.makeText(getContext(), getContext().getString(R.string.message_file_exist), Toast.LENGTH_SHORT).show();
@@ -245,6 +250,7 @@ public class ModpackInfoPage extends FCLPage implements View.OnClickListener {
                 exportInfo.setPackWithLauncher(false);
                 exportInfo.setUrl(url.get());
                 exportInfo.setForceUpdate(forceUpdate.get());
+                exportInfo.setPackCurseForge(packCurseForge.get());
                 exportInfo.setMinMemory(minMemory.get());
                 exportInfo.setLaunchArguments(launchArguments.get());
                 exportInfo.setJavaArguments(javaArguments.get());
@@ -256,7 +262,7 @@ public class ModpackInfoPage extends FCLPage implements View.OnClickListener {
                     )));
                 }
 
-                ModpackFileSelectionPage page = new ModpackFileSelectionPage(getContext(), FCLPage.PAGE_ID_TEMP, R.layout.page_modpack_file, profile, versionName, type, ModAdviser::suggestMod, exportInfo, file);
+                ModpackFileSelectionPage page = new ModpackFileSelectionPage(getContext(), FCLPage.PAGE_ID_TEMP, profile, versionName, type, ModAdviser::suggestMod, exportInfo, file);
                 UIManager.getInstance().getManageUI().showTempPage(page);
             }
         }

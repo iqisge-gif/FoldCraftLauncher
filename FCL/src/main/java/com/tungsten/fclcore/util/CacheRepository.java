@@ -55,7 +55,7 @@ public class CacheRepository {
     private Path cacheDirectory;
     private Path indexFile;
     private Map<String, ETagItem> index;
-    private final Map<String, Storage> storages = new HashMap<>();
+    private final Map<String, Storage> storages = new ConcurrentHashMap<>();
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
 
     public void changeDirectory(Path commonDir) {
@@ -95,12 +95,7 @@ public class CacheRepository {
     }
 
     public Storage getStorage(String key) {
-        lock.readLock().lock();
-        try {
-            return storages.computeIfAbsent(key, Storage::new);
-        } finally {
-            lock.readLock().unlock();
-        }
+        return storages.computeIfAbsent(key, Storage::new);
     }
 
     protected Path getFile(String algorithm, String hash) {
@@ -182,7 +177,10 @@ public class CacheRepository {
     }
 
     public void removeRemoteEntry(URLConnection conn) {
-        String url = conn.getURL().toString();
+        removeRemoteEntry(conn.getURL().toString());
+    }
+
+    public void removeRemoteEntry(String url) {
         lock.readLock().lock();
         try {
             index.remove(url);

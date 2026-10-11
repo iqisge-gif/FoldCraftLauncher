@@ -11,11 +11,6 @@
     <string name="splash_permission_settings_msg">You have chosen "Never Allow" Please manually grant storage permissions in settings.</string>
     <string name="notification_permission">FCL requires permission to post notifications to prevent issues with normal game installation or startup.</string>
 
-    <string name="splash_loading_renderer">Initializing renderer...</string>
-    <string name="splash_loading_java">Initializing Java runtime...</string>
-    <string name="splash_loading_config">Loading configuration and versions...</string>
-    <string name="splash_loading_cache">Clearing cache...</string>
-
     <string name="splash_title">Welcome to Fold Craft Launcher</string>
     <string name="splash_eula_error">Cannot get EULA, please check the network.</string>
     <string name="splash_eula_next">Agree and Continue</string>
@@ -43,6 +38,22 @@
     <string name="setting">Setting</string>
 
     <string name="about">About</string>
+    <string name="settings_plugin">Plugins</string>
+    <string name="plugin_empty">No plugins detected</string>
+    <string name="plugin_type_renderer">Renderer</string>
+    <string name="plugin_type_driver">Driver</string>
+    <string name="plugin_type_native">Native Library</string>
+    <string name="plugin_enable">Enable</string>
+    <string name="plugin_uninstall">Uninstall</string>
+    <string name="plugin_miolibpatcher_name" translatable="false">MioLibPatcher</string>
+    <string name="plugin_miolibpatcher_desc">JVM bytecode patch that fixes mod compatibility issues on Android</string>
+    <string name="plugin_miolibpatcher_alc10">ALC10 patch</string>
+    <string name="plugin_miolibpatcher_alc10_desc">Replaces alcGetCurrentContext to fix the no-audio issue in Mite (1.6.4)</string>
+    <string name="plugin_miolibpatcher_sable">Sable Rapier patch</string>
+    <string name="plugin_miolibpatcher_sable_desc">Enabled by default (no property is set); disable to force-disable the Rapier patch</string>
+    <string name="plugin_miolibpatcher_asm">ASM backdoor</string>
+    <string name="plugin_miolibpatcher_asm_desc">Removes the ASM 5.0.4 API check to support older mods like AE1 (affects all ASM 5.0.4 mods, use with caution)</string>
+    <string name="plugin_env_config">Configure</string>
     <string name="about_launcher" translatable="false">Fold Craft Launcher</string>
     <string name="about_developer" translatable="false">FCL-Team</string>
     <string name="about_sponsor">Sponsor</string>
@@ -98,8 +109,15 @@
     <string name="account_methods_microsoft_error_add_family_probably">Please check if the age indicated in your account settings is at least 18 years old. If not and you believe this is an error, you can go to official website to change it.</string>
     <string name="account_methods_microsoft_close_page">Microsoft account authorization is now completed.</string>
     <string name="account_methods_microsoft_hint">Please click on the "Login" button, a piece of code will be automatically copied later, enter the code in the opened browser to finish the login process.</string>
+    <string name="account_login_external_browser_hint">Tip: long press the "Login" button to open the login page in an external browser.</string>
     <string name="account_login_refresh">Re-login</string>
     <string name="account_login_refresh_microsoft_hint">Because the account authorization is invalid, you need to re-add your Microsoft account\nPlease click on the "OK" button, a piece of code will be automatically copied later, enter the code in the opened browser to finish the login process.</string>
+    <string name="login_state_microsoft_wait_browser">Waiting for browser authorization…</string>
+    <string name="login_state_microsoft_xbox">Authenticating with Xbox Live…</string>
+    <string name="login_state_microsoft_xsts">Acquiring Xbox XSTS token…</string>
+    <string name="login_state_microsoft_minecraft">Signing in to Minecraft services…</string>
+    <string name="login_state_microsoft_ownership">Verifying game ownership…</string>
+    <string name="login_state_microsoft_profile">Fetching player profile…</string>
     <string name="account_select_character">Select character</string>
     <string name="account_skin">Skin</string>
     <string name="account_skin_type_default">Default</string>
@@ -147,12 +165,14 @@
     <string name="button_cancel">Cancel</string>
     <string name="button_copy">Copy</string>
     <string name="button_download">Download</string>
+    <string name="button_download_all">Download All</string>
     <string name="button_export">Export</string>
     <string name="button_hide">Hide</string>
     <string name="button_install">Install</string>
     <string name="button_mouse_left">Mouse Left</string>
     <string name="button_mouse_right">Mouse Right</string>
     <string name="button_next">Next</string>
+    <string name="button_done">Done</string>
     <string name="button_paste">Paste</string>
     <string name="button_prev">Prev</string>
     <string name="button_remove">Remove</string>
@@ -173,6 +193,7 @@
     <string name="community_discord" translatable="false">Discord</string>
     <string name="community_qq">QQ-Group</string>
 
+    <string name="control_copy">Copy Layout</string>
     <string name="control_create">Create Controller</string>
     <string name="control_delete">Are you sure to delete this controller?</string>
     <string name="control_download">Download Controller</string>
@@ -217,6 +238,7 @@
     <string name="control_converting">Converting…</string>
     <string name="control_convert_failed">Conversion failed!</string>
     <string name="control_convert_unsupported">ZL2 conversion is not supported on this device (arm64 required)</string>
+    <string name="control_import_zl2_converted">ZalithLauncher2 layout detected and converted</string>
     <string name="control_upload">Upload Controller</string>
 
     <string name="curse_category_0">All</string>
@@ -375,6 +397,8 @@
     <string name="edit_button_text">Displayed Text</string>
     <string name="edit_button_event_follow">Pointer Follows Finger</string>
     <string name="edit_button_event_movable">Movable</string>
+    <string name="edit_button_event_swipable">Swipe Link</string>
+    <string name="edit_button_event_tabs_hint">The button supports all four trigger types at the same time. Switch the tabs below to configure each one.</string>
     <string name="edit_button_event_press">Press</string>
     <string name="edit_button_event_long_press">Long Press</string>
     <string name="edit_button_event_click">Click</string>
@@ -399,6 +423,9 @@
     <string name="edit_direction_event_left">Left Keycode</string>
     <string name="edit_direction_event_right">Right Keycode</string>
     <string name="edit_direction_event_follow">Follow Option (Only for rocker style)</string>
+    <string name="edit_direction_event_dead_zone">Dead Zone</string>
+    <string name="edit_direction_event_can_lock">Forward Lock</string>
+    <string name="edit_direction_event_lock_threshold">Lock Threshold</string>
     <string name="edit_direction_event_follow_fix">Fixed</string>
     <string name="edit_direction_event_follow_center">Center Follows Finger</string>
     <string name="edit_direction_event_follow_always">All Parts Follow Finger</string>
@@ -518,10 +545,15 @@
     <string name="install_installer_game" translatable="false">Minecraft</string>
     <string name="install_installer_incompatible">Incompatible with %s</string>
     <string name="install_installer_install">Install %s</string>
+    <string name="install_installer_legacyfabric" translatable="false">Legacy Fabric</string>
+    <string name="install_installer_legacyfabric_api" translatable="false">Legacy Fabric API</string>
+    <string name="install_installer_legacyfabric_api_warning">Warning: Legacy Fabric API is a mod, and will be installed into the mod directory of the game instance. Please do not change the working directory of the game, or the Legacy Fabric API will not work. If you do want to change these settings, you should reinstall it.</string>
     <string name="install_installer_install_offline">Install/Update from Local File</string>
     <string name="install_installer_install_offline_extension">Forge/OptiFine installer</string>
     <string name="installer_running_processor">Running installer (Java %s)…</string>
+    <string name="installer_running_processor_step">Running installer %1$d/%2$d: %3$s (Java %4$s)…</string>
     <string name="installer_recent_logs">Recent logs:</string>
+    <string name="installer_process_retrying">Installer process timed out, retrying (%1$d/%2$d)…</string>
     <string name="installer_process_start_error">Failed to start installer process</string>
     <string name="installer_process_no_exit_code">Installer process did not return an exit code, it may have exited abnormally</string>
     <string name="installer_process_no_response">Installer process is not responding, forcibly terminated</string>
@@ -552,6 +584,8 @@
     <string name="launch_failed">Unable to launch</string>
     <string name="launch_failed_download_library">Unable to download library %s.</string>
 
+    <string name="launch_state_version">Parsing version</string>
+    <string name="launch_state_mods">Scanning mods</string>
     <string name="launch_state_dependencies">Resolving dependencies</string>
     <string name="launch_state_modpack">Downloading dependencies</string>
     <string name="launch_state_java">Checking Java version</string>
@@ -563,9 +597,11 @@
     <string name="menu_controls_current">Current Controller</string>
     <string name="menu_controls_edit_mode">Edit Mode</string>
     <string name="menu_controls_show_boundary">Show View Boundaries</string>
+    <string name="menu_controls_edit_hint">Tap to select, drag to move, drag the corner handles to resize</string>
     <string name="menu_controls_hide_all">Hide All Views</string>
     <string name="menu_controls_auto_fit">Auto Fit Position</string>
     <string name="menu_controls_auto_fit_dist">Auto Fit Position Distance</string>
+    <string name="menu_controls_snap_adjacent">Snap to Adjacent Controls Only</string>
     <string name="menu_controls_groups">View Groups</string>
     <string name="menu_controls_manage">Manage</string>
     <string name="menu_controls_current_view_group">Current View Group</string>
@@ -587,6 +623,9 @@
     <string name="menu_control_style_add">Add Style</string>
     <string name="menu_control_style_edit">Edit Style</string>
     <string name="menu_control_view_group_add">Add View Group</string>
+    <string name="menu_control_view_group_copy">Copy view group</string>
+    <string name="menu_control_view_group_copy_suffix"> - copy</string>
+    <string name="menu_control_view_group_copy_failed">Failed to copy view group</string>
     <string name="menu_control_view_group_delete">Are you sure to delete this view group?</string>
     <string name="menu_control_view_group_name">Name</string>
     <string name="menu_control_view_group_visibility">Initial Visibility</string>
@@ -609,8 +648,10 @@
     <string name="menu_settings_gesture_mode_fight">Fight</string>
     <string name="menu_settings_gesture_current">Current Mode is %s</string>
     <string name="menu_settings_gyro">Gyroscope</string>
-    <string name="menu_settings_gyro_invert">Invert Gyroscope</string>
-    <string name="menu_settings_gyro_sensitivity">Gyro Sensitivity</string>
+    <string name="menu_settings_gyro_invert_x">Invert X Axis</string>
+    <string name="menu_settings_gyro_invert_y">Invert Y Axis</string>
+    <string name="menu_settings_gyro_sensitivity_x">Horizontal Gyro Sensitivity</string>
+    <string name="menu_settings_gyro_sensitivity_y">Vertical Gyro Sensitivity</string>
     <string name="menu_settings_lock_view">Lock Menu View</string>
     <string name="menu_settings_hide_view">Hide Menu View</string>
     <string name="menu_settings_show_fps">Show FPS</string>
@@ -624,13 +665,36 @@
     <string name="menu_settings_mouse_offset_x">Mouse Offset X</string>
     <string name="menu_settings_mouse_offset_y">Mouse Offset Y</string>
     <string name="menu_settings_physical_mouse_mode">Physical Mouse</string>
+    <string name="menu_settings_slide_acceleration">Slide Acceleration</string>
+    <string name="menu_settings_distance_acceleration">Distance Acceleration</string>
+    <string name="menu_settings_simultaneous_view_control">Simultaneous View Control</string>
+    <string name="menu_settings_capture_pointer_key">Capture Pointer Key</string>
+    <string name="menu_settings_ime_toggle_key">IME Toggle Key</string>
+    <string name="menu_settings_key_modifier">Modifier Key</string>
+    <string name="key_modifier_none">None</string>
+    <string name="key_modifier_shift">Shift</string>
+    <string name="key_modifier_ctrl">Ctrl</string>
+    <string name="key_modifier_alt">Alt</string>
+    <string name="key_bind_listening">Press a key to bind (BACK to cancel)</string>
+    <string name="key_bind_unknown">Unrecognized key, try another</string>
+    <string name="key_bind_done">Bound to %1$s</string>
+    <string name="key_bind_conflict">Conflicts with the other shortcut</string>
     <string name="menu_settings_gamepad">GamePad</string>
-    <string name="menu_settings_gamepad_disable_mapping">Disable Gamepad Mapping</string>
+    <string name="menu_settings_gamepad_control">Gamepad Control</string>
     <string name="menu_settings_gamepad_reset_mapper">ResetMapper</string>
     <string name="menu_settings_gamepad_button_binding">Button binding</string>
     <string name="menu_settings_gamepad_open_button">Open</string>
     <string name="menu_settings_gamepad_reset">Reset</string>
     <string name="menu_settings_gamepad_deadzone">DeadZone</string>
+    <string name="menu_settings_gamepad_input_mode">Gamepad Input Mode</string>
+    <string name="menu_settings_gamepad_input_mode_mapped">Mapped</string>
+    <string name="menu_settings_gamepad_input_mode_sdl_direct">SDL Direct</string>
+    <string name="menu_settings_sdl_auto_show_ime">Auto Show IME (SDL)</string>
+    <string name="gamepad_mode_prompt_title">Gamepad Input Mode</string>
+    <string name="gamepad_mode_prompt_description">A gamepad input was detected. Choose how gamepad input should be handled:</string>
+    <string name="gamepad_mode_prompt_mapped_summary">Map gamepad buttons and sticks to virtual keyboard and mouse. Suitable for older versions or games without native gamepad support.</string>
+    <string name="gamepad_mode_prompt_sdl_direct_summary">Pass gamepad input directly to SDL/GLFW. Enables native gamepad support of Minecraft 26.3+.</string>
+    <string name="gamepad_mode_prompt_hint">You can change the mode anytime from the in-game menu.</string>
     <string name="menu_settings_multiplayer">Multiplayer Menu</string>
     <string name="menu_settings_multiplayer_button">Open</string>
     <string name="menu_settings_quick_input">Quick Input</string>
@@ -641,15 +705,29 @@
     <string name="menu_settings_item_bar_scale">ItemBarScale</string>
     <string name="menu_settings_item_bar_scale_width">ItemBarScale (Width)</string>
     <string name="menu_settings_item_bar_scale_height">ItemBarScale (Height)</string>
+    <string name="menu_settings_controls_opacity">Controls Opacity</string>
     <string name="menu_settings_show_log">Show Log</string>
     <string name="menu_settings_show_log_auto">Show Log Automatically</string>
     <string name="menu_settings_performance_mode">Sustained Performance Mode</string>
+    <string name="menu_settings_max_refresh_rate">Request Max Refresh Rate</string>
+    <string name="menu_settings_force_resolution_size">Force Resolution Size</string>
+    <string name="menu_settings_force_resolution_edit">Set</string>
+    <string name="menu_settings_force_resolution_invalid">Invalid resolution, please enter as WxH (e.g. 1920x1080).</string>
     <string name="menu_settings_show_memory">Show Memory</string>
 
     <string name="message_cancelled">Operation was cancelled</string>
     <string name="message_copy">Copy successfully!</string>
     <string name="message_doing">Please wait</string>
     <string name="message_downloading">Downloading</string>
+    <string name="mods_dependency_skipped_note">%1$d dependencies could not be resolved and were skipped</string>
+    <string name="download_ready_to_install">Downloaded · tap to install</string>
+    <string name="mods_already_installed">Mod already installed</string>
+    <string name="mods_installed_skipped_note">%1$d mods already installed and skipped</string>
+    <string name="mods_dependency_resolving">Resolving required dependencies…</string>
+    <string name="download_manager">Download Manager</string>
+    <string name="game_service_channel">Game running</string>
+    <string name="game_service_notification_title">Game running</string>
+    <string name="game_service_notification_text">Tap to return to the game</string>
     <string name="message_error">Error</string>
     <string name="message_failed">Operation Failed</string>
     <string name="message_file_exist">File already exist</string>
@@ -708,6 +786,10 @@
     <string name="modpack_type_hmcl">HMCL Type</string>
     <string name="modpack_type_mcbbs_export">Can be imported by FCL, HMCL and MultiMC</string>
     <string name="modpack_type_modrinth">Modrinth</string>
+    <string name="modpack_type_modrinth_export">Can be imported by the Modrinth App and most launchers</string>
+    <string name="modpack_export_pack_curseforge">Include CurseForge remote resources in the pack</string>
+    <string name="modpack_type_curseforge">CurseForge</string>
+    <string name="modpack_type_curseforge_export">Can be imported by the CurseForge app and most launchers</string>
     <string name="modpack_type_multimc">MultiMC</string>
     <string name="modpack_type_multimc_export">Can be imported by FCL, HMCL and MultiMC</string>
     <string name="modpack_type_server">Auto-Update Modpack from Server</string>
@@ -829,6 +911,12 @@
     <string name="mods_check_updates_target_version">Target Version</string>
     <string name="mods_check_updates_update">Update</string>
     <string name="mods_check_updates_update_without">Update(without retaining old versions)</string>
+    <string name="mods_sort">Sort</string>
+    <string name="mods_sort_default">Default</string>
+    <string name="mods_sort_name">Name</string>
+    <string name="mods_sort_file_name">Filename</string>
+    <string name="mods_sort_size">Size</string>
+    <string name="mods_sort_date">Date Modified</string>
     <string name="mods_choose_mod">Choose a mod</string>
     <string name="mods_curseforge">CurseForge</string>
     <string name="mods_dependency">Dependency</string>
@@ -850,6 +938,38 @@
     <string name="mods_mcmod_page">MCMOD Page</string>
     <string name="mods_mcmod_search">Search in MCMOD</string>
     <string name="mods_modrinth">Modrinth</string>
+    <string name="mods_aggregate">Aggregated</string>
+    <string name="search_aggregate_partial">Failed to connect to %1$s, currently only showing results from %2$s. Results may be incomplete.</string>
+    <string name="favorites">Favorites</string>
+    <string name="favorite_empty_title">No favorites yet</string>
+    <string name="favorite_empty_guide">1. Swipe a search result to the left to open its action menu\n2. Tap the star button to favorite CurseForge / Modrinth resources\n3. Favorites are saved here. Tap one to open its download page</string>
+    <string name="favorite_added">Added to favorites</string>
+    <string name="favorite_removed">Removed from favorites</string>
+    <string name="favorite_open_failed">Failed to open favorite. Please check your network and try again.</string>
+    <string name="favorite_filter_all">All</string>
+    <string name="favorite_download_all">Download mods</string>
+    <string name="favorite_batch_no_version">No game version selected, cannot batch download.</string>
+    <string name="favorite_batch_no_mods">No mods in favorites.</string>
+    <string name="favorite_batch_failed">Batch download failed. Please try again.</string>
+    <string name="favorite_batch_none_matched">No favorited mods match the current version/loader.</string>
+    <string name="favorite_batch_skipped_note">Skipped %d mod(s) with no matching version/loader.</string>
+    <string name="favorite_batch_parsing">Resolving downloadable mods...</string>
+    <string name="favorite_batch_download">Download</string>
+    <string name="favorite_batch_queued">Queued %d file(s) for download</string>
+    <string name="favorite_group">Groups</string>
+    <string name="favorite_group_select">Select groups</string>
+    <string name="favorite_group_edit">Edit groups</string>
+    <string name="favorite_group_new">New group</string>
+    <string name="favorite_group_manage">Manage groups</string>
+    <string name="favorite_group_none">No groups yet. Create one below.</string>
+    <string name="favorite_invert_select">Invert</string>
+    <string name="favorite_remove_selected">Remove</string>
+    <string name="favorite_multi_remove_confirm">Remove %d selected favorites?</string>
+    <string name="favorite_group_select_hint">Groups are optional. Confirm to favorite without one, or create a group first.</string>
+    <string name="favorite_group_rename">Rename</string>
+    <string name="favorite_group_delete_confirm">Delete group "%1$s"? Favorites in it are kept.</string>
+    <string name="favorite_group_exists">A group with this name already exists</string>
+    <string name="mods_batch_resolving">Resolving mod dependencies</string>
     <string name="mods_name">Name</string>
     <string name="mods_not_modded">You must install a mod loader (Fabric, Forge or LiteLoader) first to manage your mods!</string>
     <string name="message_broken_mods">The following mod files are corrupted. Do you want to delete them?\n%s</string>
@@ -873,6 +993,30 @@
     <string name="quick_input_empty">Fill the text first!</string>
 
     <string name="resourcepack">Resource Packs</string>
+
+    <string name="resourcepack_manage">Resource Packs</string>
+    <string name="resourcepack_add">Import resource pack</string>
+    <string name="resourcepack_invalid">Invalid</string>
+    <string name="resourcepack_rename_exists">A resource pack with the same name already exists</string>
+    <string name="resourcepack_add_success">Imported resource pack %s.</string>
+    <string name="resourcepack_add_failed">Failed to import resource pack %s.</string>
+    <string name="resourcepack_info_type">Type: %s</string>
+    <string name="resourcepack_info_type_folder">Folder</string>
+    <string name="resourcepack_info_type_zip">Zip archive</string>
+    <string name="resourcepack_info_file_name">File name: %s</string>
+    <string name="resourcepack_info_file_size">Size: %s</string>
+    <string name="resourcepack_info_format">Pack format: %s</string>
+    <string name="shaderpack_manage">Shader Packs</string>
+    <string name="shaderpack_add">Import shader pack</string>
+    <string name="shaderpack_invalid">Invalid shader pack</string>
+    <string name="shaderpack_rename_exists">A shader pack with the same name already exists</string>
+    <string name="shaderpack_add_success">Imported shader pack %s.</string>
+    <string name="shaderpack_add_failed">Failed to import shader pack %s.</string>
+    <string name="shaderpack_info_type">Type: %s</string>
+    <string name="shaderpack_info_type_folder">Folder</string>
+    <string name="shaderpack_info_type_zip">Zip archive</string>
+    <string name="shaderpack_info_file_name">File name: %s</string>
+    <string name="shaderpack_info_file_size">Size: %s</string>
 
     <string name="search">Search</string>
     <string name="search_hint_chinese">Search queries support both Chinese and English</string>
@@ -916,14 +1060,12 @@
     <string name="settings_fcl_graphics_backend_desc">Choose the graphics rendering backend. Only effective for 26.2+.</string>
     <string name="settings_fcl_renderer">OpenGL Implementation</string>
     <string name="settings_fcl_renderer_desc">Choose the OpenGL renderer implementation.</string>
-    <string name="settings_fcl_pojav_bigcore">Force the renderer to run on the big core</string>
-    <string name="settings_fcl_pojav_bigcore_desc">Force the renderer to run on performance big cores.</string>
-    <string name="settings_fcl_renderer_gl4es" translatable="false">Holy GL4ES (OpenGL 2.1, 1.21.5-)</string>
+    <string name="settings_fcl_renderer_gl4es" translatable="false">Holy GL4ES (OpenGL 2.1)</string>
     <string name="settings_fcl_renderer_virgl" translatable="false">VirGLRenderer (OpenGL 4.3)</string>
-    <string name="settings_fcl_renderer_vgpu">VGPU (OpenGL 2.1+, only support 1.17-)</string>
+    <string name="settings_fcl_renderer_vgpu">VGPU (OpenGL 2.1+)</string>
     <string name="settings_fcl_renderer_zink" translatable="false">Kopper Zink (OpenGL 4.6)</string>
-    <string name="settings_fcl_renderer_freedreno">Freedreno (OpenGL 4.6, only support GPU a616-a660)</string>
-    <string name="settings_fcl_renderer_nggl4es">Krypton Wrapper (OpenGL 3.1+, built-in)</string>
+    <string name="settings_fcl_renderer_freedreno">Freedreno (OpenGL 4.6, only support adreno616-a660)</string>
+    <string name="settings_fcl_renderer_nggl4es">Krypton Wrapper (OpenGL 3.1+)</string>
 
     <string name="settings_fcl_driver">Vulkan Driver</string>
     <string name="settings_fcl_driver_desc">Choose the Vulkan driver implementation.</string>
@@ -953,13 +1095,26 @@
     <string name="settings_launcher_upgrade">Update Launcher</string>
     <string name="settings_launcher_upgrade_desc">Check whether a new version of the launcher is available.</string>
     <string name="settings_launcher_upgrade_check">Check</string>
+    <string name="settings_launcher_update_changelog">Notes</string>
+    <string name="update_changelog">What\'s New</string>
+    <string name="update_changelog_not_found">Update notes are not available for this version.</string>
     <string name="settings_launcher_download">Download</string>
     <string name="settings_launcher_download_threads">Threads</string>
     <string name="settings_launcher_download_threads_desc">Set the number of concurrent download threads.</string>
     <string name="settings_launcher_download_threads_auto">Automatically Determine</string>
     <string name="settings_launcher_download_source">Download Source</string>
-    <string name="settings_launcher_download_source_desc">Choose the download source. Auto mode matches per version.</string>
+    <string name="settings_launcher_download_source_desc">Choose the preferred source for version lists and file downloads.</string>
+    <string name="settings_launcher_download_source_version_list">Version List Source</string>
+    <string name="settings_launcher_download_source_file">File Download Source</string>
     <string name="settings_launcher_download_source_auto">Auto Choose Download Mirror</string>
+    <string name="download_source_default">Auto (matches your network)</string>
+    <string name="download_source_official">Official</string>
+    <string name="download_source_mirror">Mirror</string>
+    <string name="exception_dns_pollution">SSL connection failed, possibly due to DNS pollution.</string>
+    <string name="settings_launcher_mod_cache">Mod Cache</string>
+    <string name="settings_launcher_mod_cache_clear">Clear</string>
+    <string name="settings_launcher_mod_cache_desc">Clear cached CurseForge / Modrinth query results.</string>
+    <string name="settings_launcher_mod_cache_cleared">Mod cache cleared</string>
     <string name="settings_launcher_language">Language</string>
     <string name="settings_launcher_language_desc">Switch the launcher UI language. Some languages require a restart.</string>
     <string name="settings_launcher_language_system">Use System Language</string>
@@ -971,6 +1126,9 @@
     <string name="settings_launcher_language_ukrainian" translatable="false">Українська Мова</string>
     <string name="settings_launcher_language_german" translatable="false">Deutsch</string>
     <string name="settings_launcher_language_traditional_chinese_hk" translatable="false">繁體中文（香港）</string>
+    <string name="settings_launcher_language_japanese" translatable="false">日本語</string>
+    <string name="settings_launcher_language_turkish" translatable="false">Türkçe</string>
+    <string name="settings_launcher_language_traditional_chinese_tw" translatable="false">繁體中文（台灣）</string>
     <string name="settings_launcher_launcher_log_export">Export launcher logs</string>
     <string name="settings_launcher_launcher_log_export_failed">Unable to export logs</string>
     <string name="settings_launcher_launcher_log_export_success">Logs have been exported to %s</string>
@@ -980,11 +1138,15 @@
     <string name="settings_launcher_theme_mode_light">Light Mode</string>
     <string name="settings_launcher_theme_mode_dark">Dark Mode</string>
     <string name="settings_launcher_theme">Main Theme Color</string>
-    <string name="settings_launcher_theme_desc">Customize the main color of the launcher theme.</string>
+    <string name="settings_launcher_theme_desc">Customize the main color (light theme).</string>
+    <string name="settings_launcher_theme_dark">Main Theme Color</string>
+    <string name="settings_launcher_theme_dark_desc">Customize the main color (dark theme).</string>
     <string name="settings_launcher_theme2">Secondary Theme Color</string>
     <string name="settings_launcher_theme2_desc">Customize the secondary color (light theme).</string>
     <string name="settings_launcher_theme2_dark">Secondary Theme Color</string>
     <string name="settings_launcher_theme2_dark_desc">Customize the secondary color (dark theme).</string>
+    <string name="settings_launcher_color_alpha">Color Opacity</string>
+    <string name="settings_launcher_color_alpha_desc" formatted="false">Opacity of theme-derived colors (cards, pressed states, etc.), independent of the main color. 0% = fully transparent, 100% = fully opaque.</string>
     <string name="settings_launcher_theme_fetch_background">Extract from background image</string>
     <string name="settings_launcher_background_lt">Light Mode Launcher Background</string>
     <string name="settings_launcher_background_lt_desc">Customize the background image of the light theme. Maximum resolution: 5120x5120.</string>
@@ -1172,6 +1334,20 @@
     <string name="version_manage_remove_confirm">Are you sure you want to permanently remove the version %s? This action cannot be undone!</string>
     <string name="version_manage_remove_confirm_independent">Since this instance is stored in an isolated directory, deleting it will also delete its saves and other data. Do you still want to delete instance %s?</string>
     <string name="version_manage_remove_libraries">Delete All Libraries</string>
+    <string name="version_manage_remove_deep">Deep Delete</string>
+    <string name="version_manage_remove_deep_hint">"Deep Delete" also cleans up libraries and assets referenced only by this version.</string>
+    <string name="version_manage_remove_deep_done">Removed version %1$s, cleaned %2$d unreferenced library/asset files, freed %3$.1f MB</string>
+    <string name="version_manage_remove_deep_failed">Failed to enumerate libraries and assets referenced by this version, only the version folder was removed</string>
+    <string name="version_manage_remove_deep_done_title">Deep Delete Finished</string>
+    <string name="version_manage_remove_deep_failed_title">Deep Delete Failed</string>
+    <string name="version_manage_remove_progress_title">Removing version %s</string>
+    <string name="version_deep_clean_parsing">Parsing version %s</string>
+    <string name="version_deep_clean_references">Collecting references of version %s</string>
+    <string name="version_deep_clean_folder">Deleting version folder %s</string>
+    <string name="version_deep_clean_library">Deleting library %s</string>
+    <string name="version_deep_clean_asset_index">Deleting asset index %s</string>
+    <string name="version_deep_clean_assets">Deleting %2$d asset files of %1$s</string>
+    <string name="version_deep_clean_virtual">Deleting virtual assets %s</string>
     <string name="version_manage_rename">Rename Instance</string>
     <string name="version_manage_rename_message">Rename version</string>
     <string name="version_manage_rename_new">New name</string>
@@ -1204,6 +1380,7 @@
     <string name="world_datapack_1_13">Only Minecraft 1.13 or newer supports datapacks.</string>
     <string name="world_description">%s. Last played on %s. Game Version: %s.</string>
     <string name="world_download">Download a World</string>
+    <string name="world_duplicate">Copy World</string>
     <string name="world_export">Export World</string>
     <string name="world_export_title">Select a directory for this exported world</string>
     <string name="world_export_location">Export to</string>
@@ -1214,6 +1391,7 @@
     <string name="world_import_choose">Select the save archive you want to import</string>
     <string name="world_import_failed">Unable to import this world: %s</string>
     <string name="world_import_invalid">Unable to parse the save.</string>
+    <string name="world_locked_failed">This world is locked by the game or another launcher.</string>
     <string name="world_info_title">World %s - Information</string>
     <string name="world_info_basic">Basic Information</string>
     <string name="world_info_allow_cheats">Allow Cheats</string>
@@ -1232,6 +1410,7 @@
     <string name="world_info_player_game_type">Game Mode</string>
     <string name="world_info_player_game_type_adventure">Adventure</string>
     <string name="world_info_player_game_type_creative">Creative</string>
+    <string name="world_info_player_game_type_hardcore">Hardcore</string>
     <string name="world_info_player_game_type_spectator">Spectator</string>
     <string name="world_info_player_game_type_survival">Survival</string>
     <string name="world_info_player_health">Health</string>
@@ -1255,12 +1434,46 @@
     <string name="modpack_download_warn_msg">Before installation, you should understand that most modpacks are designed for PC, so there is a high probability that you will encounter crashes or other issues when trying to launch. This is often not a problem that can be solved at the launcher level. Therefore, you need to understand the relevant knowledge and try to solve the problem yourself or seek help from others (do not ask the launcher developer!).</string>
     <string name="guide_theme2">If you find the color of the text on the right side is not clear, you can click here, then click \"Launcher Settings\", and select \"Secondary Theme Color\"</string>
     <string name="guide_share_log">Long press here to share the game log (latest_game.log).</string>
+    <string name="guide_version_card">Tap the version card to open the version list and manage your versions. Long press to quickly select a version.</string>
+    <string name="guide_account">No account yet? Tap here to add one.</string>
+    <string name="guide_start">Tap to launch the selected version, long-press to pick a renderer and launch directly.</string>
+    <string name="guide_manage">Adjust game settings, and manage game files, mods, saves, resource packs and more.</string>
+    <string name="guide_download">Download game versions, mods, modpacks, resource packs and more.</string>
+    <string name="guide_controller">Configure or download on-screen button layouts.</string>
+    <string name="guide_multiplayer">Play remotely with friends via Terracotta.</string>
     <string name="joystick_l">Left joystick</string>
     <string name="gamepad_dpad">DPAD</string>
     <string name="gamepad_button_binding">Gamepad button binding</string>
     <string name="joystick_r">Right joystick</string>
     <string name="message_vulkan_driver_system">Warning: Using the system Vulkan driver may result in better performance, but may also cause crashes due to compatibility issues!</string>
     <string name="message_loading_controllers">Loading controllers, please wait...</string>
+
+    <string name="settings_fcl_vulkan_check">Check Vulkan</string>
+    <string name="settings_fcl_vulkan_check_desc">Check whether the device supports the Vulkan rendering backend required by Minecraft 26.2 and later.</string>
+    <string name="settings_fcl_vulkan_check_not_checked">Not checked</string>
+    <string name="settings_fcl_vulkan_check_disable">Disable Vulkan compatibility check</string>
+    <string name="settings_fcl_vulkan_check_disable_desc">Skip the Vulkan compatibility check and related prompts when launching Minecraft 26.2 and later.</string>
+    <string name="vulkan_check_title">Vulkan Check</string>
+    <string name="vulkan_check_running">Checking Vulkan support...</string>
+    <string name="vulkan_check_failed">Vulkan check failed. The device may not support Vulkan, or the driver failed to load.</string>
+    <string name="vulkan_check_support_all">The device supports all Vulkan features required by Minecraft %s and later.</string>
+    <string name="vulkan_check_support_none">The device does not meet the Vulkan requirements of any Minecraft version.</string>
+    <string name="vulkan_check_support_partial">The device only supports the Vulkan backend for some Minecraft versions.</string>
+    <string name="vulkan_check_versions">Version ranges</string>
+    <string name="vulkan_check_version_range">Minecraft %s:</string>
+    <string name="vulkan_check_profile_support">Supported</string>
+    <string name="vulkan_check_profile_unsupport">Not supported</string>
+    <string name="vulkan_check_version">Vulkan version: %s</string>
+    <string name="vulkan_check_turnip">Driver: %s</string>
+    <string name="vulkan_check_driver_system">System driver</string>
+    <string name="vulkan_check_extensions">Extensions</string>
+    <string name="vulkan_check_features">Features</string>
+    <string name="vulkan_check_item_name_missing">%s (missing)</string>
+    <string name="vulkan_check_dep_required">Required in: %s</string>
+    <string name="vulkan_check_dep_optional">Optional in: %s</string>
+    <string name="vulkan_check_launch_tip">This version ships with a Vulkan rendering backend. Check whether the device supports it now?</string>
+    <string name="vulkan_check_launch_warning">The device does not fully meet the Vulkan requirements of this version. The Vulkan renderer in game may not work:\n%s</string>
+    <string name="vulkan_check_launch_continue">Launch anyway</string>
 
     <string name="mcmod" translatable="false">
         <u>MC百科</u>
@@ -1308,11 +1521,12 @@
     <string name="message_warn_renderer_global_setting">The version you have currently selected has enabled per-instance settings, so the renderer selected here cannot be applied to the current version. Suggest long pressing the "Launch" button to select the renderer.</string>
     <string name="message_select_url">Please select a link to download (it will open in your browser).</string>
     <string name="supported_mc_version">Supported MC version:</string>
+    <string name="renderer_source">Source:</string>
+    <string name="renderer_source_builtin">Built-in</string>
     <string name="message_check_renderer">The current renderer %s does not support this game version. Continuing to use it may cause rendering errors or game crashes! Do you want to continue?</string>
     <string name="message_check_plugin">The current plugin %s does not support this game version. Continuing to use it may cause the game to crash! Do you want to continue?</string>
     <string name="enabled">Enabled</string>
     <string name="disabled">Disabled</string>
-    <string name="message_warn_restart_after_change">The changes will take effect after restarting.</string>
     <string name="message_check_path_valid">The currently selected game file path (%s) may contain illegal characters, which could cause the game to crash upon launching. It is recommended to check the game directory or rename the version. Do you want to continue launching?</string>
     <string name="message_check_has_modloader">It has been detected that the currently launched game version has mods installed, but the corresponding mod loader does not seem to be installed. The mods may not function properly after launching. Do you want to continue launching?</string>
     <string name="message_data_is_loading">The data is still loading and cannot be modified.</string>
@@ -1342,6 +1556,38 @@
     <string name="file_browser_positive_alert">No file/directory selected!</string>
     <string name="file_browser_share_title">Share the file</string>
     <string name="file_browser_share_message">Are you sure to share this file?</string>
+    <string name="file_browser_manage">Actions</string>
+    <string name="file_browser_new_folder">New folder</string>
+    <string name="file_browser_new_file">New file</string>
+    <string name="file_browser_rename">Rename</string>
+    <string name="file_browser_delete">Delete</string>
+    <string name="file_browser_copy">Copy</string>
+    <string name="file_browser_cut">Cut</string>
+    <string name="file_browser_paste">Paste</string>
+    <string name="file_browser_share">Share</string>
+    <string name="file_browser_details">Details</string>
+    <string name="file_browser_sort">Sort by</string>
+    <string name="file_browser_sort_name">Name</string>
+    <string name="file_browser_sort_size">Size</string>
+    <string name="file_browser_sort_date">Modified time</string>
+    <string name="file_browser_show_hidden_files">Show hidden files</string>
+    <string name="file_browser_hide_hidden_files">Hide hidden files</string>
+    <string name="file_browser_refresh">Refresh</string>
+    <string name="file_browser_batch">Batch operations</string>
+    <string name="file_browser_select_all">Select all</string>
+    <string name="file_browser_name">Name</string>
+    <string name="file_browser_path">Path</string>
+    <string name="file_browser_type">Type</string>
+    <string name="file_browser_size">Size</string>
+    <string name="file_browser_last_modified">Modified</string>
+    <string name="file_browser_type_file">File</string>
+    <string name="file_browser_type_folder">Folder</string>
+    <string name="file_browser_delete_message">The deleted items cannot be recovered. Continue?</string>
+    <string name="file_browser_invalid_name">Invalid file name.</string>
+    <string name="file_browser_exists">A file with the same name already exists.</string>
+    <string name="file_browser_clipboard_empty">Clipboard is empty.</string>
+    <string name="file_browser_no_selection">No file selected.</string>
+    <string name="file_browser_operation_failed">Operation failed.</string>
     <string name="crash_reporter_title">Crash Report</string>
     <string name="crash_reporter_hint">Fold Craft Launcher has encountered an unresolvable error, please seek help from the developer or others.</string>
     <string name="crash_reporter_restart">Restart</string>
@@ -1363,4 +1609,17 @@
     <string name="log_upload_share">Share Link</string>
     <string name="log_upload_share_template">I encountered a problem in the launcher, here is the log link:\n%s</string>
     <string name="close">Close</string>
+    <string name="create_account_first">Please create a game account before launching</string>
+    <string name="version_list_refreshing">Fetching remote version list…</string>
+    <string name="skin_settings">Skin Settings</string>
+    <string name="skin_solid_layer">3D Skin Layer</string>
+    <string name="skin_body_separation">Separate Body and Legs</string>
+    <string name="animation_idle">Idle</string>
+    <string name="animation_idle_variant_1">Idle variant 1</string>
+    <string name="animation_idle_variant_2">Idle variant 2</string>
+    <string name="animation_idle_variant_3">Idle variant 3</string>
+    <string name="quark_promo_title">Support FCL</string>
+    <string name="quark_promo_message">This is your %1$dth game launch!\n\nIf FCL has been helpful to you, feel free to take a moment to open Quark Drive, sign up or log in and tap the Save to Drive button (no download needed). It would mean a lot to us. Thank you so much!</string>
+    <string name="quark_promo_open">Open Quark Drive</string>
+    <string name="quark_promo_start">Start Game</string>
 </resources>

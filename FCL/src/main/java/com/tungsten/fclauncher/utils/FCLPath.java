@@ -9,6 +9,8 @@ public class FCLPath {
 
     public static String NATIVE_LIB_DIR;
 
+    public static final String LATEST_GAME_LOG = "latest_game.log";
+
     public static String LOG_DIR;
     public static String CACHE_DIR;
 
@@ -27,6 +29,7 @@ public class FCLPath {
     public static String FILES_DIR;
     public static String PLUGIN_DIR;
     public static String BACKGROUND_DIR;
+    public static String SKIN_DIR;
     public static String CONTROLLER_DIR;
     public static String SHARE_DIR;
 
@@ -62,6 +65,7 @@ public class FCLPath {
         FILES_DIR = context.getFilesDir().getAbsolutePath();
         PLUGIN_DIR = FILES_DIR + "/plugins";
         BACKGROUND_DIR = FILES_DIR + "/background";
+        SKIN_DIR = FILES_DIR + "/skin";
         CONTROLLER_DIR = Environment.getExternalStorageDirectory().getAbsolutePath() + "/FCL/control";
         SHARE_DIR = Environment.getExternalStorageDirectory().getAbsolutePath() + "/FCL/share";
         File externalFilesDir = context.getExternalFilesDir(null);
@@ -91,17 +95,21 @@ public class FCLPath {
         init(FILES_DIR);
         init(PLUGIN_DIR);
         init(BACKGROUND_DIR);
+        init(SKIN_DIR);
         init(CONTROLLER_DIR);
         init(SHARE_DIR);
         init(PRIVATE_COMMON_DIR);
         init(SHARED_COMMON_DIR);
     }
 
-    private static boolean init(String path) {
+    private static void init(String path) {
         if (!new File(path).exists()) {
-            return new File(path).mkdirs();
+            new File(path).mkdirs();
         }
-        return true;
+    }
+
+    public static File getLatestGameLog() {
+        return new File(LOG_DIR, LATEST_GAME_LOG);
     }
 
 }

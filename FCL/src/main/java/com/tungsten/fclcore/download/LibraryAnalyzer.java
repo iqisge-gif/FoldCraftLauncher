@@ -122,7 +122,7 @@ public final class LibraryAnalyzer implements Iterable<LibraryAnalyzer.LibraryMa
     /**
      * Remove library by library id
      *
-     * @param libraryId patch id or "forge"/"optifine"/"liteloader"/"fabric"/"quilt"/"neoforge"/"cleanroom"
+     * @param libraryId patch id or "forge"/"optifine"/"liteloader"/"fabric"/"legacyfabric"/"quilt"/"neoforge"/"cleanroom"
      * @return this
      */
     public LibraryAnalyzer removeLibrary(String libraryId) {
@@ -170,13 +170,20 @@ public final class LibraryAnalyzer implements Iterable<LibraryAnalyzer.LibraryMa
     public static boolean isModded(VersionProvider provider, Version version) {
         Version resolvedVersion = version.resolve(provider);
         String mainClass = resolvedVersion.getMainClass();
-        return mainClass != null && (LAUNCH_WRAPPER_MAIN.equals(mainClass)
+        if (mainClass != null && (LAUNCH_WRAPPER_MAIN.equals(mainClass)
                 || mainClass.startsWith("net.minecraftforge")
                 || mainClass.startsWith("net.neoforged")
                 || mainClass.startsWith("top.outlands") //Cleanroom
                 || mainClass.startsWith("net.fabricmc")
                 || mainClass.startsWith("org.quiltmc")
-                || mainClass.startsWith("cpw.mods"));
+                // lwj3ify (RetroFuturaBootstrap)
+                || mainClass.startsWith("com.gtnewhorizons.retrofuturabootstrap")
+                || mainClass.startsWith("cpw.mods"))) {
+            return true;
+        }
+        // MultiMC 整合包合成补丁的入口由组件决定,一律视为 modded
+        List<Version> patches = resolvedVersion.getPatches();
+        return patches != null && patches.stream().anyMatch(patch -> "multimc".equals(patch.getId()));
     }
 
     public Set<ModLoaderType> getModLoaders() {
@@ -190,8 +197,36 @@ public final class LibraryAnalyzer implements Iterable<LibraryAnalyzer.LibraryMa
 
     public enum LibraryType {
         MINECRAFT(true, "game", Pattern.compile("^$"), Pattern.compile("^$"), null),
-        FABRIC(true, "fabric", Pattern.compile("net\\.fabricmc"), Pattern.compile("fabric-loader"), ModLoaderType.FABRIC),
+        // 与 Legacy Fabric 共用 net.fabricmc:fabric-loader，按是否存在 net.legacyfabric 库区分归属
+        FABRIC(true, "fabric", Pattern.compile("net\\.fabricmc"), Pattern.compile("fabric-loader"), ModLoaderType.FABRIC) {
+            @Override
+            protected boolean matchLibrary(Library library, List<Library> libraries) {
+                if (super.matchLibrary(library, libraries)) {
+                    for (Library l : libraries) {
+                        if ("net.legacyfabric".equals(l.getGroupId())) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+                return false;
+            }
+        },
         FABRIC_API(true, "fabric-api", Pattern.compile("net\\.fabricmc"), Pattern.compile("fabric-api"), null),
+        LEGACY_FABRIC(true, "legacyfabric", Pattern.compile("net\\.fabricmc"), Pattern.compile("fabric-loader"), null) {
+            @Override
+            protected boolean matchLibrary(Library library, List<Library> libraries) {
+                if (super.matchLibrary(library, libraries)) {
+                    for (Library l : libraries) {
+                        if ("net.legacyfabric".equals(l.getGroupId())) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+        },
+        LEGACY_FABRIC_API(true, "legacyfabric-api", Pattern.compile("net\\.legacyfabric"), Pattern.compile("legacyfabric-api"), null),
         FORGE(true, "forge", Pattern.compile("net\\.minecraftforge"), Pattern.compile("(forge|fmlloader)"), ModLoaderType.FORGE) {
             private final Pattern FORGE_VERSION_MATCHER = Pattern.compile("^([0-9.]+)-(?<forge>[0-9.]+)(-([0-9.]+))?$");
 
